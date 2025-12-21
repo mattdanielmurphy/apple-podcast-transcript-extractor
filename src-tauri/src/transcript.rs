@@ -34,20 +34,20 @@ pub fn get_podcasts_base_dir() -> PathBuf {
     PathBuf::from(home).join("Library/Group Containers/243LU875E5.groups.com.apple.podcasts")
 }
 
-pub fn get_cache_dir() -> PathBuf {
-    get_podcasts_base_dir().join("Library/Cache")
+pub fn get_cache_dir(base_dir: &Path) -> PathBuf {
+    base_dir.join("Library/Cache")
 }
 
-pub fn get_ttml_dir() -> PathBuf {
-    get_podcasts_base_dir().join("Library/Cache/Assets/TTML")
+pub fn get_ttml_dir(base_dir: &Path) -> PathBuf {
+    base_dir.join("Library/Cache/Assets/TTML")
 }
 
-pub fn get_database_path() -> PathBuf {
-    get_podcasts_base_dir().join("Documents/MTLibrary.sqlite")
+pub fn get_database_path(base_dir: &Path) -> PathBuf {
+    base_dir.join("Documents/MTLibrary.sqlite")
 }
 
-pub fn get_audio_path(uuid: &str) -> Option<PathBuf> {
-    let cache_dir = get_cache_dir();
+pub fn get_audio_path(base_dir: &Path, uuid: &str) -> Option<PathBuf> {
+    let cache_dir = get_cache_dir(base_dir);
     let mp3_path = cache_dir.join(format!("{}.mp3", uuid));
     if mp3_path.exists() {
         return Some(mp3_path);
@@ -59,14 +59,14 @@ pub fn get_audio_path(uuid: &str) -> Option<PathBuf> {
     None
 }
 
-pub fn scan_ttml_files() -> Result<Vec<Episode>, String> {
-    let ttml_dir = get_ttml_dir();
+pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
+    let ttml_dir = get_ttml_dir(base_dir);
     
     if !ttml_dir.exists() {
         return Err(format!("TTML directory not found: {:?}", ttml_dir));
     }
 
-    let db_path = get_database_path();
+    let db_path = get_database_path(base_dir);
     if !db_path.exists() {
         return Err(format!("Database not found: {:?}", db_path));
     }
@@ -75,7 +75,7 @@ pub fn scan_ttml_files() -> Result<Vec<Episode>, String> {
         .map_err(|e| format!("Failed to open database: {}", e))?;
 
     let mut episodes = Vec::new();
-    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &mut episodes)?;
+    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &mut episodes, base_dir)?;
 
     Ok(episodes)
 }
@@ -85,6 +85,7 @@ fn find_ttml_files_recursive(
     base_dir: &Path,
     conn: &Connection,
     episodes: &mut Vec<Episode>,
+    podcasts_base_dir: &Path,
 ) -> Result<(), String> {
     let entries = fs::read_dir(dir)
         .map_err(|e| format!("Failed to read directory {:?}: {}", dir, e))?;
@@ -94,7 +95,7 @@ fn find_ttml_files_recursive(
         let path = entry.path();
 
         if path.is_dir() {
-            find_ttml_files_recursive(&path, base_dir, conn, episodes)?;
+            find_ttml_files_recursive(&path, base_dir, conn, episodes, podcasts_base_dir)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("ttml") {
             let relative_path = path
                 .strip_prefix(base_dir)
@@ -112,7 +113,7 @@ fn find_ttml_files_recursive(
             let metadata = query_episode_metadata(conn, &transcript_identifier);
 
             let uuid = metadata.as_ref().and_then(|m| m.get("uuid").cloned().and_then(|v| v.as_str().map(|s| s.to_string())));
-            let has_audio = uuid.as_ref().map(|u| get_audio_path(u).is_some()).unwrap_or(false);
+            let has_audio = uuid.as_ref().map(|u| get_audio_path(podcasts_base_dir, u).is_some()).unwrap_or(false);
 
             episodes.push(Episode {
                 transcript_identifier: transcript_identifier.clone(),
@@ -526,19 +527,19 @@ fn trash_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn delete_episode_audio(episode: &Episode) -> Result<(), String> {
+pub fn delete_episode_audio(base_dir: &Path, episode: &Episode) -> Result<(), String> {
     let uuid = episode.uuid.as_ref().ok_or("Episode has no UUID")?;
-    let audio_path = get_audio_path(uuid).ok_or("Audio file not found")?;
+    let audio_path = get_audio_path(base_dir, uuid).ok_or("Audio file not found")?;
 
     trash_file(&audio_path).map_err(|e| format!("Failed to move audio file to trash: {}", e))?;
     Ok(())
 }
 
-pub fn delete_multiple_episodes_audio(episodes: &[Episode]) -> Result<usize, String> {
+pub fn delete_multiple_episodes_audio(base_dir: &Path, episodes: &[Episode]) -> Result<usize, String> {
     let mut count = 0;
     for episode in episodes {
         if let Some(uuid) = &episode.uuid {
-            if let Some(audio_path) = get_audio_path(uuid) {
+            if let Some(audio_path) = get_audio_path(base_dir, uuid) {
                 if trash_file(&audio_path).is_ok() {
                     count += 1;
                 }

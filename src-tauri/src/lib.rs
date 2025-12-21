@@ -10,6 +10,11 @@ use tauri::{Manager, Emitter};
 use tauri::menu::{Menu, MenuItem, Submenu, PredefinedMenuItem};
 
 #[tauri::command]
+fn get_suggested_podcasts_dir() -> String {
+    transcript::get_podcasts_base_dir().to_string_lossy().to_string()
+}
+
+#[tauri::command]
 fn get_default_transcript_directory(app_handle: tauri::AppHandle) -> Result<String, String> {
     app_handle.path().app_data_dir()
         .map(|path| path.join("transcripts").to_string_lossy().to_string())
@@ -27,9 +32,10 @@ fn get_transcript(episode: Episode) -> Result<Vec<Paragraph>, String> {
 }
 
 #[tauri::command]
-fn scan_episodes() -> Result<Vec<Episode>, String> {
-    println!("Command 'scan_episodes' invoked");
-    match scan_ttml_files() {
+fn scan_episodes(podcasts_base_dir: String) -> Result<Vec<Episode>, String> {
+    println!("Command 'scan_episodes' invoked with path: {}", podcasts_base_dir);
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
+    match scan_ttml_files(&base_path) {
         Ok(episodes) => {
             println!("Found {} episodes", episodes.len());
             Ok(episodes)
@@ -68,33 +74,38 @@ fn open_path(paths: Vec<String>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn delete_audio(episode: Episode) -> Result<(), String> {
-    delete_episode_audio(&episode)
+fn delete_audio(podcasts_base_dir: String, episode: Episode) -> Result<(), String> {
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
+    delete_episode_audio(&base_path, &episode)
 }
 
 #[tauri::command]
-fn delete_multiple_audio(episodes: Vec<Episode>) -> Result<usize, String> {
-    delete_multiple_episodes_audio(&episodes)
+fn delete_multiple_audio(podcasts_base_dir: String, episodes: Vec<Episode>) -> Result<usize, String> {
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
+    delete_multiple_episodes_audio(&base_path, &episodes)
 }
 
 #[tauri::command]
-fn get_audio_path_string(uuid: String) -> Option<String> {
-    get_audio_path(&uuid).map(|p| p.to_string_lossy().to_string())
+fn get_audio_path_string(podcasts_base_dir: String, uuid: String) -> Option<String> {
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
+    get_audio_path(&base_path, &uuid).map(|p| p.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-fn open_audio(episode: Episode) -> Result<(), String> {
+fn open_audio(podcasts_base_dir: String, episode: Episode) -> Result<(), String> {
     let uuid = episode.uuid.as_ref().ok_or("Episode has no UUID")?;
-    let audio_path = get_audio_path(uuid).ok_or("Audio file not found")?;
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
+    let audio_path = get_audio_path(&base_path, uuid).ok_or("Audio file not found")?;
     open_path(vec![audio_path.to_string_lossy().to_string()])
 }
 
 #[tauri::command]
-fn open_audio_multiple(episodes: Vec<Episode>) -> Result<(), String> {
+fn open_audio_multiple(podcasts_base_dir: String, episodes: Vec<Episode>) -> Result<(), String> {
     let mut paths = Vec::new();
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
     for ep in episodes {
         if let Some(uuid) = &ep.uuid {
-            if let Some(path) = get_audio_path(uuid) {
+            if let Some(path) = get_audio_path(&base_path, uuid) {
                 paths.push(path.to_string_lossy().to_string());
             }
         }
@@ -103,11 +114,12 @@ fn open_audio_multiple(episodes: Vec<Episode>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn reveal_audio_multiple(episodes: Vec<Episode>) -> Result<(), String> {
+fn reveal_audio_multiple(podcasts_base_dir: String, episodes: Vec<Episode>) -> Result<(), String> {
     let mut paths = Vec::new();
+    let base_path = std::path::PathBuf::from(podcasts_base_dir);
     for ep in episodes {
         if let Some(uuid) = &ep.uuid {
-            if let Some(path) = get_audio_path(uuid) {
+            if let Some(path) = get_audio_path(&base_path, uuid) {
                 paths.push(path.to_string_lossy().to_string());
             }
         }
@@ -250,7 +262,8 @@ pub fn run() {
             open_audio_multiple,
             reveal_audio_multiple,
             get_audio_path_string,
-            load_metadata
+            load_metadata,
+            get_suggested_podcasts_dir
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
