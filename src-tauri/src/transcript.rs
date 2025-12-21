@@ -19,6 +19,8 @@ pub struct Episode {
     pub category: Option<String>,
     pub pub_date: Option<f64>,
     pub import_date: Option<f64>,
+    pub store_id: Option<String>,
+    pub podcast_store_id: Option<String>,
     pub has_audio: bool,
     pub is_orphaned: bool,
 }
@@ -126,6 +128,8 @@ fn find_ttml_files_recursive(
                 category: metadata.as_ref().and_then(|m| m.get("category").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
                                     pub_date: metadata.as_ref().and_then(|m| m.get("pub_date").cloned().and_then(|v| v.as_f64())),
                                     import_date: metadata.as_ref().and_then(|m| m.get("import_date").cloned().and_then(|v| v.as_f64())),
+                                    store_id: metadata.as_ref().and_then(|m| m.get("store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                                    podcast_store_id: metadata.as_ref().and_then(|m| m.get("podcast_store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
                                     has_audio,
                                     is_orphaned: false,
                                 });        }
@@ -146,7 +150,9 @@ fn query_episode_metadata(
             p.ZCATEGORY as category,
             e.ZPUBDATE as pub_date,
             e.ZIMPORTDATE as import_date,
-            e.ZUUID as uuid
+            e.ZUUID as uuid,
+            e.ZSTORETRACKID as store_id,
+            p.ZSTORECOLLECTIONID as podcast_store_id
         FROM ZMTEPISODE e
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
         WHERE e.ZTRANSCRIPTIDENTIFIER = ?1
@@ -176,6 +182,18 @@ fn query_episode_metadata(
         if let Ok(uuid) = row.get::<_, String>(6) {
             map.insert("uuid".to_string(), serde_json::Value::String(uuid));
         }
+        
+        if let Ok(store_id) = row.get::<_, i64>(7) {
+            if store_id != 0 {
+                map.insert("store_id".to_string(), serde_json::Value::String(store_id.to_string()));
+            }
+        }
+
+        if let Ok(podcast_store_id) = row.get::<_, i64>(8) {
+            if podcast_store_id != 0 {
+                map.insert("podcast_store_id".to_string(), serde_json::Value::String(podcast_store_id.to_string()));
+            }
+        }
 
         Ok(map)
     })
@@ -187,7 +205,17 @@ pub fn search_episodes_content(query: String, episodes: Vec<Episode>) -> Vec<usi
     let mut results = Vec::new();
 
     for (index, episode) in episodes.iter().enumerate() {
-        if let Ok(content) = fs::read_to_string(&episode.file_path) {
+        let path = if let Some(local_path) = &episode.local_ttml_path {
+            if Path::new(local_path).exists() {
+                local_path
+            } else {
+                &episode.file_path
+            }
+        } else {
+            &episode.file_path
+        };
+
+        if let Ok(content) = fs::read_to_string(path) {
             // Simple case-insensitive search in raw content for speed first
             // If it matches raw, then we can be more precise if needed, 
             // but for a "is this word here" check, a raw check usually works.
@@ -212,11 +240,13 @@ pub fn extract_transcript(
     output_dir: &str,
     include_timestamps: bool,
 ) -> Result<(String, String), String> {
-    // Try to read from local copy if original path doesn't exist or if it's already an orphaned episode
-    let ttml_path = if episode.is_orphaned {
-        episode.local_ttml_path.as_ref().ok_or("Orphaned episode has no local TTML path")?
-    } else if !Path::new(&episode.file_path).exists() && episode.local_ttml_path.is_some() {
-        episode.local_ttml_path.as_ref().unwrap()
+    // Try to read from local copy if it exists, otherwise use original path
+    let ttml_path = if let Some(local_path) = &episode.local_ttml_path {
+        if Path::new(local_path).exists() {
+            local_path
+        } else {
+            &episode.file_path
+        }
     } else {
         &episode.file_path
     };
@@ -349,10 +379,12 @@ pub fn load_extracted_metadata(output_dir: &str) -> Vec<TranscriptMetadata> {
 }
 
 pub fn get_transcript_paragraphs(episode: &Episode) -> Result<Vec<Paragraph>, String> {
-    let path = if episode.is_orphaned {
-        episode.local_ttml_path.as_ref().ok_or("Orphaned episode has no local TTML path")?
-    } else if !Path::new(&episode.file_path).exists() && episode.local_ttml_path.is_some() {
-        episode.local_ttml_path.as_ref().unwrap()
+    let path = if let Some(local_path) = &episode.local_ttml_path {
+        if Path::new(local_path).exists() {
+            local_path
+        } else {
+            &episode.file_path
+        }
     } else {
         &episode.file_path
     };
@@ -499,7 +531,7 @@ fn format_timestamp(seconds: f64) -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
-use std::process::Command;
+use objc2_foundation::{NSFileManager, NSURL, NSString};
 
 pub fn sanitize_filename(filename: &str) -> String {
     filename
@@ -514,15 +546,33 @@ pub fn sanitize_filename(filename: &str) -> String {
         .collect()
 }
 
-fn trash_file(path: &Path) -> Result<(), String> {
-    let path_str = path.to_string_lossy();
-    let script = format!("tell application \"Finder\" to delete POSIX file \"{}\"", path_str);
+pub fn is_within_dir(path: &Path, base_dir: &Path) -> bool {
+    let path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    let base_dir = match base_dir.canonicalize() {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    path.starts_with(base_dir)
+}
+
+pub fn trash_file(path: &Path, base_dir: &Path) -> Result<(), String> {
+    if !is_within_dir(path, base_dir) {
+        return Err(format!(
+            "Access denied: Path {:?} is outside of approved directory {:?}",
+            path, base_dir
+        ));
+    }
+
+    let file_manager = NSFileManager::defaultManager();
+    let path_str = path.to_str().ok_or("Invalid path encoding")?;
+    let ns_path = NSString::from_str(path_str);
+    let url = NSURL::fileURLWithPath(&ns_path);
     
-    Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("Failed to execute osascript: {}", e))?;
+    file_manager.trashItemAtURL_resultingItemURL_error(&url, None)
+        .map_err(|e| format!("Failed to move to Trash: {}", e))?;
     
     Ok(())
 }
@@ -531,7 +581,7 @@ pub fn delete_episode_audio(base_dir: &Path, episode: &Episode) -> Result<(), St
     let uuid = episode.uuid.as_ref().ok_or("Episode has no UUID")?;
     let audio_path = get_audio_path(base_dir, uuid).ok_or("Audio file not found")?;
 
-    trash_file(&audio_path).map_err(|e| format!("Failed to move audio file to trash: {}", e))?;
+    trash_file(&audio_path, base_dir).map_err(|e| format!("Failed to move audio file to trash: {}", e))?;
     Ok(())
 }
 
@@ -540,7 +590,7 @@ pub fn delete_multiple_episodes_audio(base_dir: &Path, episodes: &[Episode]) -> 
     for episode in episodes {
         if let Some(uuid) = &episode.uuid {
             if let Some(audio_path) = get_audio_path(base_dir, uuid) {
-                if trash_file(&audio_path).is_ok() {
+                if trash_file(&audio_path, base_dir).is_ok() {
                     count += 1;
                 }
             }

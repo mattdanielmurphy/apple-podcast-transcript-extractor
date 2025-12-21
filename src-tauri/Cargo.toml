@@ -28,3 +28,6 @@ tauri-plugin-fs = "2"
 tauri-plugin-store = "2"
 rusqlite = "0.32"
 quick-xml = "0.36"
+objc2 = "0.6.1"
+objc2-foundation = { version = "0.3.0", features = ["NSFileManager", "NSURL", "NSString", "NSError", "NSArray"] }
+objc2-app-kit = { version = "0.3.0", features = ["NSWorkspace"] }

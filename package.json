@@ -5,7 +5,12 @@
 	"scripts": {
 		"tauri": "tauri",
 		"dev": "tauri dev",
-		"build": "tauri build"
+		"build": "tauri build",
+		"watch-build": "npx chokidar-cli \"src/**/*\" -c \"npm run build\"",
+		"test:build-reset-open": "npm run build && npm run test:reset-permissions && npm run test:clean-data && npm run test:open-app",
+		"test:reset-permissions": "sudo tccutil reset All com.mattdanielmurphy.podcast-transcript-extractor",
+		"test:clean-data": "rm -rf '/Users/matthewmurphy/Library/Application Support/com.mattdanielmurphy.podcast-transcript-extractor'",
+		"test:open-app": "open '/Users/matthewmurphy/projects/apple-podcast-transcript-extractor/src-tauri/target/release/bundle/macos/Transcript Extractor.app'"
 	},
 	"dependencies": {
 		"sqlite3": "^5.1.6",

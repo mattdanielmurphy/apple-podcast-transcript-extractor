@@ -92,6 +92,9 @@ name = "app"
 version = "0.1.1"
 dependencies = [
  "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
  "quick-xml 0.36.2",
  "rusqlite",
  "serde",

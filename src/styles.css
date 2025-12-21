@@ -168,12 +168,16 @@ body {
     background: none;
     border: none;
     backdrop-filter: none;
+    flex: 1;
+    min-width: 0;
 }
 
 .control-group {
     display: flex;
     gap: var(--space-2);
     align-items: center;
+    flex: 1;
+    min-width: 0;
 }
 
 .control-label {
@@ -184,8 +188,9 @@ body {
 }
 
 .input-group {
-    display: inline-flex;
+    display: flex;
     align-items: stretch;
+    flex: 1;
 }
 
 /* Inputs */
@@ -203,7 +208,8 @@ body {
 }
 
 .text-input {
-    width: 280px;
+    flex: 1;
+    min-width: 100px;
     border-top-right-radius: 0;
     border-bottom-right-radius: 0;
     border-right: none;
@@ -211,7 +217,6 @@ body {
 
 #output-dir {
     /* display: none; */
-    width: 200px;
 }
 
 .text-input:hover,
@@ -1074,7 +1079,7 @@ body {
     border-radius: var(--r-md);
     box-shadow: var(--shadow-2);
     padding: 6px;
-    min-width: 180px;
+    min-width: 220px;
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -1278,14 +1283,14 @@ body {
 
 @media (max-width: 1050px) {
     .controls-panel {
-        flex-wrap: wrap;
+        /* Keep it on one line */
+        flex-wrap: nowrap;
         gap: var(--space-3);
     }
 
     .action-buttons {
-        margin-left: 0;
-        width: 100%;
-        justify-content: flex-start;
+        margin-left: auto;
+        width: auto;
     }
 }
 
@@ -1476,6 +1481,41 @@ body {
     height: 1px;
     background: var(--separator);
     margin: 5px;
+}
+
+/* Delete Confirmation Modal */
+.delete-modal-content {
+    width: min(500px, 90vw);
+    height: auto;
+    grid-template-rows: auto auto auto;
+}
+
+.delete-modal-content .modal-header {
+    grid-template-columns: 1fr auto;
+    padding: var(--space-3) var(--space-4);
+}
+
+.delete-modal-content .modal-title {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.delete-modal-content .modal-body {
+    padding: var(--space-4);
+    font-size: 14px;
+}
+
+.delete-option {
+    margin-top: var(--space-4);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--separator);
+}
+
+.delete-modal-content .modal-footer {
+    padding: var(--space-3) var(--space-4);
+    justify-content: flex-end;
+    gap: var(--space-2);
 }
 
 /* Toast Notifications */

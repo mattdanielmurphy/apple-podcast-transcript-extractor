@@ -63,11 +63,14 @@ const elements = {
 	modalExtractBtn: document.getElementById("modal-extract-btn"),
 	modalOpenBtn: document.getElementById("modal-open-btn"),
 	modalRevealBtn: document.getElementById("modal-reveal-btn"),
+	modalDeleteTranscriptBtn: document.getElementById("modal-delete-transcript-btn"),
+	modalOpenPodcastsBtn: document.getElementById("modal-open-podcasts-btn"),
 	modalOpenAudioBtn: document.getElementById("modal-open-audio-btn"),
 	modalRevealAudioBtn: document.getElementById("modal-reveal-audio-btn"),
-	modalSelectToggleBtn: document.getElementById("modal-select-toggle-btn"),
 	modalCopyBtn: document.getElementById("modal-copy-btn"),
 	modalDeleteAudioBtn: document.getElementById("modal-delete-audio-btn"),
+	modalAudioDivider: document.getElementById("modal-audio-divider"),
+	modalAudioGroup: document.getElementById("modal-audio-group"),
 	modalSearchInput: document.getElementById("modal-search-input"),
 	modalSearchCount: document.getElementById("modal-search-count"),
 	modalSearchPrev: document.getElementById("modal-search-prev"),
@@ -76,13 +79,23 @@ const elements = {
 	// Context Menu
 	contextMenu: document.getElementById("context-menu"),
 	cmView: document.getElementById("cm-view"),
+	cmOpenPodcasts: document.getElementById("cm-open-podcasts"),
 	cmOpen: document.getElementById("cm-open"),
 	cmReveal: document.getElementById("cm-reveal"),
+	cmDeleteTranscript: document.getElementById("cm-delete-transcript"),
 	cmSelect: document.getElementById("cm-select"),
 	cmDeselect: document.getElementById("cm-deselect"),
 	cmExtract: document.getElementById("cm-extract"),
 	cmDeleteAudio: document.getElementById("cm-delete-audio"),
 	cmCopyTitle: document.getElementById("cm-copy-title"),
+
+	// Delete Modal
+	deleteModal: document.getElementById("delete-modal"),
+	deleteModalOverlay: document.getElementById("delete-modal-overlay"),
+	deleteModalCloseBtn: document.getElementById("delete-modal-close-btn"),
+	deleteModalCancelBtn: document.getElementById("delete-modal-cancel-btn"),
+	deleteModalConfirmBtn: document.getElementById("delete-modal-confirm-btn"),
+	deleteEverythingCheckbox: document.getElementById("delete-everything-checkbox"),
 
 	// Selection Bar
 	selectionBar: document.getElementById("selection-bar"),
@@ -90,7 +103,6 @@ const elements = {
 	barExtractBtn: document.getElementById("bar-extract-btn"),
 	barExtractDropdownBtn: document.getElementById("bar-extract-dropdown-btn"),
 	barExtractDropdownMenu: document.getElementById("bar-extract-dropdown-menu"),
-	barExtractWithTimestampsBtn: document.getElementById("bar-extract-with-timestamps-btn"),
 	barExtractNoTimestampsBtn: document.getElementById("bar-extract-no-timestamps-btn"),
 	barRevealTranscriptsBtn: document.getElementById("bar-reveal-transcripts-btn"),
 	barOpenTranscriptsBtn: document.getElementById("bar-open-transcripts-btn"),
@@ -250,7 +262,6 @@ function setupEventListeners() {
 		elements.barExtractDropdownMenu.classList.toggle("hidden")
 	})
 
-	elements.barExtractWithTimestampsBtn.addEventListener("click", () => extractTranscripts(true))
 	elements.barExtractNoTimestampsBtn.addEventListener("click", () => extractTranscripts(false))
 
 	// Close dropdown when clicking elsewhere
@@ -292,6 +303,12 @@ function setupEventListeners() {
 			else navigateModalSearch(1)
 		}
 	})
+
+	// Delete Modal listeners
+	elements.deleteModalCloseBtn.addEventListener("click", closeDeleteModal)
+	elements.deleteModalCancelBtn.addEventListener("click", closeDeleteModal)
+	elements.deleteModalOverlay.addEventListener("click", closeDeleteModal)
+	elements.deleteModalConfirmBtn.addEventListener("click", confirmDeleteTranscript)
 
 	window.addEventListener("keydown", (e) => {
 		if (e.key === "Escape") {
@@ -374,8 +391,10 @@ function setupContextMenu() {
 		// Update menu item visibility/state
 		const canViewSource = !episode.is_orphaned || episode.local_ttml_path
 		elements.cmView.style.display = canViewSource ? "flex" : "none"
+		elements.cmOpenPodcasts.style.display = episode.store_id || !episode.is_orphaned ? "flex" : "none"
 		elements.cmOpen.style.display = isExisting ? "flex" : "none"
 		elements.cmReveal.style.display = isExisting ? "flex" : "none"
+		elements.cmDeleteTranscript.style.display = isExisting ? "flex" : "none"
 		elements.cmSelect.style.display = isSelected ? "none" : "flex"
 		elements.cmDeselect.style.display = isSelected ? "flex" : "none"
 		elements.cmExtract.style.display = canViewSource ? "flex" : "none"
@@ -410,6 +429,13 @@ function setupContextMenu() {
 		if (contextMenuTargetIndex !== -1) viewTranscript(contextMenuTargetIndex)
 	}
 
+	elements.cmOpenPodcasts.onclick = () => {
+		if (contextMenuTargetIndex !== -1) {
+			const episode = episodes[contextMenuTargetIndex]
+			openInPodcasts(episode)
+		}
+	}
+
 	elements.cmOpen.onclick = () => {
 		if (contextMenuTargetIndex !== -1) {
 			const episode = episodes[contextMenuTargetIndex]
@@ -425,6 +451,13 @@ function setupContextMenu() {
 			const filename = getExpectedFilename(episode)
 			const filePath = `${elements.outputDir.value}/${filename}`
 			revealInFinder(filePath)
+		}
+	}
+
+	elements.cmDeleteTranscript.onclick = () => {
+		if (contextMenuTargetIndex !== -1) {
+			const episode = episodes[contextMenuTargetIndex]
+			openDeleteModal(episode)
 		}
 	}
 
@@ -600,6 +633,86 @@ async function deleteSelectedAudio() {
 	} catch (error) {
 		console.error("Error deleting audio:", error)
 		setStatus(`Error: ${error}`, "error")
+	}
+}
+
+/**
+ * Generic helper to move a file to trash with safety check
+ * @param {string} filePath Absolute path to the file
+ * @param {string} baseDir The approved base directory the file must be within
+ */
+async function openInPodcasts(episode) {
+	try {
+		console.log("Opening in Podcasts. PodcastStoreID:", episode.podcast_store_id, "EpisodeStoreID:", episode.store_id);
+		await invokeTauri("open_podcasts_episode", { 
+			podcastId: episode.podcast_store_id, 
+			episodeId: episode.store_id 
+		})
+	} catch (error) {
+		console.error("Error opening Podcasts:", error)
+		setStatus("Error opening Podcasts", "error")
+	}
+}
+
+let currentDeleteEpisode = null
+
+function openDeleteModal(episode) {
+	currentDeleteEpisode = episode
+	elements.deleteEverythingCheckbox.checked = false
+	elements.deleteModal.classList.remove("hidden")
+}
+
+function closeDeleteModal() {
+	elements.deleteModal.classList.add("hidden")
+	currentDeleteEpisode = null
+}
+
+async function confirmDeleteTranscript() {
+	if (!currentDeleteEpisode) return
+	
+	const deleteEverything = elements.deleteEverythingCheckbox.checked
+	const episode = currentDeleteEpisode
+	const filename = getExpectedFilename(episode)
+	
+	try {
+		setStatus("Deleting transcript bundle...")
+		await invokeTauri("delete_transcript_bundle", {
+			episode: episode,
+			outputDir: elements.outputDir.value,
+			podcastsBaseDir: podcastsDataDir,
+			deleteEverything: deleteEverything,
+		})
+		
+		existingTranscripts.delete(filename)
+		if (deleteEverything) {
+			episode.has_audio = false
+		}
+		
+		renderEpisodes()
+		updateUI()
+		
+		// Close transcript viewer if it's open
+		if (!elements.modal.classList.contains("hidden")) {
+			closeTranscriptViewer()
+		}
+		
+		closeDeleteModal()
+		setStatus("Transcript deleted", "success")
+		showToast(deleteEverything ? "Episode bundle deleted" : "Transcript deleted")
+	} catch (error) {
+		console.error("Error deleting transcript bundle:", error)
+		setStatus(`Error: ${error}`, "error")
+	}
+}
+
+async function trashItem(filePath, baseDir) {
+	try {
+		await invokeTauri("trash_item", { path: filePath, baseDir: baseDir })
+		return true
+	} catch (error) {
+		console.error("Error trashing item:", error)
+		setStatus(`Error: ${error}`, "error")
+		return false
 	}
 }
 
@@ -1102,6 +1215,8 @@ async function deleteAudioForEpisode(index) {
 
 		// If modal is open, update its buttons
 		if (!elements.modal.classList.contains("hidden")) {
+			elements.modalAudioDivider.style.display = "none"
+			elements.modalAudioGroup.style.display = "none"
 			elements.modalOpenAudioBtn.style.display = "none"
 			elements.modalRevealAudioBtn.style.display = "none"
 			elements.modalDeleteAudioBtn.style.display = "none"
@@ -1156,11 +1271,17 @@ async function viewTranscript(index) {
 		const isExisting = existingTranscripts.has(filename)
 		const filePath = `${elements.outputDir.value}/${filename}`
 
+		elements.modalOpenPodcastsBtn.style.display = episode.store_id || !episode.is_orphaned ? "flex" : "none"
 		elements.modalOpenBtn.style.display = isExisting ? "flex" : "none"
 		elements.modalRevealBtn.style.display = isExisting ? "flex" : "none"
-		elements.modalOpenAudioBtn.style.display = episode.has_audio ? "flex" : "none"
-		elements.modalRevealAudioBtn.style.display = episode.has_audio ? "flex" : "none"
-		elements.modalDeleteAudioBtn.style.display = episode.has_audio ? "flex" : "none"
+		elements.modalDeleteTranscriptBtn.style.display = isExisting ? "flex" : "none"
+		
+		const showAudio = episode.has_audio
+		elements.modalAudioDivider.style.display = showAudio ? "block" : "none"
+		elements.modalAudioGroup.style.display = showAudio ? "flex" : "none"
+		elements.modalOpenAudioBtn.style.display = showAudio ? "flex" : "none"
+		elements.modalRevealAudioBtn.style.display = showAudio ? "flex" : "none"
+		elements.modalDeleteAudioBtn.style.display = showAudio ? "flex" : "none"
 
 		const lastState = transcriptTimestampState.get(episode.transcript_identifier)
 		// If we know what it is, offer the opposite. Otherwise default to offering with timestamps.
@@ -1175,20 +1296,18 @@ async function viewTranscript(index) {
 				<polyline points="7 10 12 15 17 10" />
 				<line x1="12" y1="15" x2="12" y2="3" />
 			</svg>
-			<span>${offerTimestamps ? "Extract with Timestamps" : "Extract without Timestamps"}</span>
-		`
-
-		const updateSelectToggleBtn = () => {
-			const isSelected = selectedEpisodes.has(index)
-			elements.modalSelectToggleBtn.querySelector("span").textContent = isSelected ? "Deselect" : "Select"
-			elements.modalSelectToggleBtn.querySelector("svg").innerHTML = isSelected
-				? '<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />'
-				: '<polyline points="20 6 9 17 4 12" />'
-		}
-		updateSelectToggleBtn()
-
+			            <span>${offerTimestamps ? "Extract with Timestamps" : "Extract without Timestamps"}</span>
+					`
+			
 		elements.modalOpenBtn.onclick = () => openExisting(filePath)
 		elements.modalRevealBtn.onclick = () => revealInFinder(filePath)
+		elements.modalDeleteTranscriptBtn.onclick = () => openDeleteModal(episode)
+		elements.modalOpenPodcastsBtn.onclick = () => openInPodcasts(episode)
+		elements.modalCopyBtn.onclick = () => {
+			const text = `${episode.podcast_title} - ${episode.episode_title}`
+			navigator.clipboard.writeText(text)
+			showToast("Copied to clipboard")
+		}
 		elements.modalOpenAudioBtn.onclick = async () => {
 			try {
 				await invokeTauri("open_audio", { 
@@ -1204,7 +1323,6 @@ async function viewTranscript(index) {
 			try {
 				const uuid = episode.uuid
 				if (!uuid) return
-				// We need a way to get the path on backend
 				const path = await invokeTauri("get_audio_path_string", { 
 					podcastsBaseDir: podcastsDataDir,
 					uuid 
@@ -1217,22 +1335,6 @@ async function viewTranscript(index) {
 				setStatus("Error revealing audio", "error")
 			}
 		}
-		elements.modalCopyBtn.onclick = () => {
-			const text = `${episode.podcast_title} - ${episode.episode_title}`
-			navigator.clipboard.writeText(text)
-			showToast("Copied to clipboard")
-		}
-		elements.modalSelectToggleBtn.onclick = () => {
-			if (selectedEpisodes.has(index)) {
-				selectedEpisodes.delete(index)
-			} else {
-				selectedEpisodes.add(index)
-			}
-			updateSelectToggleBtn()
-			renderEpisodes()
-			updateUI()
-		}
-
 		elements.modalDeleteAudioBtn.onclick = () => {
 			deleteAudioForEpisode(index)
 		}

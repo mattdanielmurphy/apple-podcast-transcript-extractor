@@ -191,7 +191,6 @@
 									</svg>
 								</button>
 								<div class="dropdown-menu hidden" id="bar-extract-dropdown-menu">
-									<button type="button" class="dropdown-item" id="bar-extract-with-timestamps-btn">Extract with Timestamps</button>
 									<button type="button" class="dropdown-item" id="bar-extract-no-timestamps-btn">Extract without Timestamps</button>
 								</div>
 							</div>
@@ -281,11 +280,12 @@
 								</svg>
 								<span>Copy Title</span>
 							</button>
-							<button type="button" class="btn btn-outline btn-small" id="modal-select-toggle-btn">
-								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-									<polyline points="20 6 9 17 4 12" />
+							<button type="button" class="btn btn-outline btn-small" id="modal-open-podcasts-btn">
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M12 1a11 11 0 1 0 11 11A11 11 0 0 0 12 1zm0 18a7 7 0 1 1 7-7 7 7 0 0 1-7 7z" />
+									<circle cx="12" cy="12" r="3" />
 								</svg>
-								<span>Select</span>
+								<span>Open in Podcasts</span>
 							</button>
 						</div>
 
@@ -295,6 +295,7 @@
 							<span class="group-label">Transcript</span>
 							<button type="button" class="btn btn-outline btn-small" id="modal-reveal-btn">Reveal</button>
 							<button type="button" class="btn btn-outline btn-small" id="modal-open-btn">Open</button>
+							<button type="button" class="btn btn-outline btn-small btn-danger" id="modal-delete-transcript-btn">Delete</button>
 							<button type="button" class="btn btn-outline btn-small" id="modal-extract-btn">
 								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
 									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -305,9 +306,9 @@
 							</button>
 						</div>
 
-						<div class="action-divider"></div>
+						<div class="action-divider" id="modal-audio-divider"></div>
 
-						<div class="action-group">
+						<div class="action-group" id="modal-audio-group">
 							<span class="group-label">Audio</span>
 							<button type="button" class="btn btn-outline btn-small" id="modal-reveal-audio-btn">Reveal</button>
 							<button type="button" class="btn btn-outline btn-small" id="modal-open-audio-btn">Open</button>
@@ -327,6 +328,13 @@
 				</svg>
 				<span>View Transcript</span>
 			</button>
+			<button class="context-menu-item" id="cm-open-podcasts" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 1a11 11 0 1 0 11 11A11 11 0 0 0 12 1zm0 18a7 7 0 1 1 7-7 7 7 0 0 1-7 7z" />
+					<circle cx="12" cy="12" r="3" />
+				</svg>
+				<span>Open in Podcasts</span>
+			</button>
 			<button class="context-menu-item" id="cm-open" role="menuitem">
 				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -341,6 +349,16 @@
 					<line x1="3" y1="10" x2="21" y2="10" />
 				</svg>
 				<span>Reveal in Finder</span>
+			</button>
+			<button class="context-menu-item cm-danger" id="cm-delete-transcript" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M3 6h18"></path>
+					<path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+					<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+					<line x1="10" y1="11" x2="10" y2="17"></line>
+					<line x1="14" y1="11" x2="14" y2="17"></line>
+				</svg>
+				<span>Delete Transcript</span>
 			</button>
 			<div class="context-menu-divider"></div>
 			<button class="context-menu-item" id="cm-select" role="menuitem">
@@ -379,6 +397,31 @@
 				</svg>
 				<span>Copy Episode Title</span>
 			</button>
+		</div>
+
+		<!-- Delete Confirmation Modal -->
+		<div id="delete-modal" class="modal hidden" role="dialog" aria-modal="true">
+			<button type="button" class="modal-overlay" id="delete-modal-overlay"></button>
+			<div class="modal-content delete-modal-content">
+				<div class="modal-header">
+					<h2 class="modal-title">Delete Transcript</h2>
+					<button type="button" class="modal-close-btn" id="delete-modal-close-btn">&times;</button>
+				</div>
+				<div class="modal-body">
+					<p id="delete-modal-message">Remove this entirely from the episode list here?</p>
+					
+					<div class="delete-option">
+						<label class="checkbox-label">
+							<input type="checkbox" id="delete-everything-checkbox" class="checkbox-input">
+							<span class="checkbox-text">Delete Everything (the audio and original transcript file too)</span>
+						</label>
+					</div>
+				</div>
+				<footer class="modal-footer">
+					<button type="button" class="btn btn-outline" id="delete-modal-cancel-btn">Cancel</button>
+					<button type="button" class="btn btn-danger" id="delete-modal-confirm-btn">Remove</button>
+				</footer>
+			</div>
 		</div>
 
 		<script src="main.js"></script>

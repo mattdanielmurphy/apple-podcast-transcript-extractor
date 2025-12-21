@@ -23,9 +23,10 @@
   - **Search Highlighting**: Highlights search matches within the transcript viewer when using content search.
   - **Flexible Extraction**: Extract single transcripts from the viewer or batch extract selected episodes.
     - **Timestamp Options**: Selection bar now features a split button to choose between "with" and "without" timestamps (defaulting to "with").
-    - **Audio Deletion**: Delete the cached audio file for specific episodes directly from the context menu or transcript viewer. Uses AppleScript to move files to the macOS Trash.
-    - **Multi-File Reveal**: Uses AppleScript to select multiple files simultaneously in a single Finder window (overcoming `open -R` limitations).
-    - **Orphaned Episode Support**: When a transcript is extracted, the original TTML file is now copied to a local store (`.metadata/ttml/`). This allows orphaned episodes (those deleted from the Apple Podcasts cache) to still be viewed and re-extracted within the app, preserving access to the transcript even after audio deletion.
+    - **Audio Deletion**: Delete the cached audio file for specific episodes directly from the context menu or transcript viewer. Uses native macOS Trash API (NSFileManager) for deletion.
+    - **Multi-File Reveal**: Uses native macOS API (NSWorkspace) to select multiple files simultaneously in a single Finder window.
+    - **Transcript Deletion**: Move extracted transcript files to Trash directly from the app.
+    - **Local Transcript Source**: When a transcript is extracted, the original TTML file is copied to a local store (`.metadata/ttml/`). The app now always prioritizes this local copy for viewing, re-extraction, and searching. This ensures that once a transcript is extracted, access is preserved even if the Podcasts app deletes the original file (creating an "orphaned" episode).
   - **Entitlements**: Added `Entitlements.plist` (with sandboxing disabled) and configured `tauri.conf.json` to resolve recurring macOS permission prompts and ensure file access persistence.
   - **Explicit Folder Access**: To gain access to the Apple Podcasts data without triggering implicit permission dialogs, the app now prompts the user once with an explanation dialog before opening a folder picker. Once selected, the path is persisted.
   - **Settings Persistence**: Remembers the user's preferred output directory and Podcasts data directory (gained via explicit picker) using `tauri-plugin-store`.
@@ -39,8 +40,12 @@
     - **Contextual Actions**: Selection bar now contextually hides transcript-related actions when viewing unextracted episodes.
 - **Build**:
   - `npm install` – install Node dependencies.
-  - `npm run dev` – start a dev server (optional for UI preview).
-  - `npm run build` – bundle the frontend.
+  - `npm run dev` – start the app in development mode.
+  - `npm run build` – produce a signed `.app` bundle.
+  - `npm run watch-build` – watch for changes and rebuild automatically.
+  - `npm run test:reset-permissions` – reset macOS TCC permissions (useful for testing permission prompts).
+  - `npm run test:clean-data` – clear the application support data directory.
+  - `npm run test:open-app` – open the built release application bundle.
   - `cargo tauri dev` – run the app locally.
   - `cargo tauri build` – produce a signed `.app` bundle (requires a paid Apple Developer account for distribution).
 - **Release**: GitHub Actions workflow (`.github/workflows/release.yml`) builds and uploads the `.app` artifact.
