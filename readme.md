@@ -6,6 +6,10 @@
 
 This tool extracts transcripts from the Podcasts app on macOS.
 
+### Important Notes
+- In order to extract a podcast transcript, you must **download** the podcast episode in the Apple Podcasts app.
+- Apple does not generate transcripts for podcasts in private feeds (ie a premium podcast feed with no ads), and so obviously this app cannot extract a transcript from them.
+
 ## 🚀 Recommended: macOS Application
 
 <p align="center">
@@ -35,8 +39,6 @@ For developers or those who prefer the terminal, a command-line script is also a
 2. Install dependencies: `npm install`
 
 ## Usage
-
-Note: You need to download the desired podcast episode(s) before you can extract the transcript.
 
 ### Batch Mode
 To process all TTML files in your Apple Podcasts cache:
