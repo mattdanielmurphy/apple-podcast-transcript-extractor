@@ -1,6 +1,25 @@
 # Apple Podcasts Transcript Extractor
 
-This script extracts transcripts from the Podcasts app on macOS.
+This tool extracts transcripts from the Podcasts app on macOS.
+
+## 🚀 Recommended: macOS Application
+
+The **Transcript Extractor macOS App** is the easiest and most feature-rich way to extract your transcripts. It provides a beautiful, native interface for browsing and exporting transcripts without touching the command line.
+
+### Why use the App?
+- **Native macOS Interface**: A polished, easy-to-use GUI.
+- **Enhanced Browsing**: Easily search and filter through your downloaded podcast transcripts.
+- **One-Click Export**: Quickly save transcripts to your preferred location.
+- **No Setup Required**: Just download and run—no need to install Node.js or run scripts.
+
+### Download
+👉 **[Download the latest version of Transcript Extractor](https://github.com/mattdanielmurphy/apple-podcast-transcript-extractor/releases/latest)**
+
+---
+
+## 💻 Developer Tool (CLI)
+
+For developers or those who prefer the terminal, a command-line script is also available.
 
 ## Installation
 
