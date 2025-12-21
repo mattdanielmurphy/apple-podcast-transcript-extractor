@@ -13,12 +13,11 @@ The **Transcript Extractor macOS App** is the easiest and most feature-rich way 
 <p align="center">
   <img width="900" alt="image" src="https://github.com/user-attachments/assets/921dcfca-a9f0-4f5d-838a-456798a06417" />
   
-  <b>Episode list</b>
+  <b align="center">Episode list</b>
   
   <img width="2624" height="1824" alt="image" src="https://github.com/user-attachments/assets/0731f40f-68f5-4e08-b316-b5800e5b618b" />
   
-  <b>Transcript view</b>
-  <p>Showing a keyword search</p>
+  <b align="center">Transcript view</b>
 </p>
 
 ### Why use the App?
