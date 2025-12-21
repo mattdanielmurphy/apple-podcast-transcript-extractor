@@ -1,6 +1,6 @@
 {
 	"name": "apple-podcast-transcript-extractor",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Extract transcripts from Apple Podcasts on macOS",
 	"scripts": {
 		"tauri": "tauri",

@@ -37,16 +37,21 @@ jobs:
       - name: Build Tauri app
         run: cargo tauri build --verbose
 
-      - name: Upload .app artifact
+      - name: Zip .app bundle
+        run: |
+          cd src-tauri/target/release/bundle/macos/
+          zip -r "Transcript-Extractor.zip" "Transcript Extractor.app"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ApplePodcastTranscriptExtractor.app
-          path: src-tauri/target/release/bundle/macos/*.app
+          name: Transcript-Extractor
+          path: src-tauri/target/release/bundle/macos/Transcript-Extractor.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/release/bundle/macos/*.app
+          files: src-tauri/target/release/bundle/macos/Transcript-Extractor.zip
           generate_release_notes: true
           draft: false
           prerelease: false
