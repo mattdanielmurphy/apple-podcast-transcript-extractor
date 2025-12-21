@@ -50,8 +50,12 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
           files: src-tauri/target/release/bundle/macos/Transcript-Extractor.zip
           generate_release_notes: true
           draft: false
           prerelease: false
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

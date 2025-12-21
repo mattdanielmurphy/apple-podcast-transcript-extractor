@@ -1,10 +1,12 @@
 {
 	"name": "apple-podcast-transcript-extractor",
-	  "version": "0.1.2",	"description": "Extract transcripts from Apple Podcasts on macOS",
+	"version": "0.1.2",
+	"description": "Extract transcripts from Apple Podcasts on macOS",
 	"scripts": {
 		"tauri": "tauri",
 		"dev": "tauri dev",
 		"build": "tauri build",
+		"release": "npm run build && node release.js",
 		"watch-build": "npx chokidar-cli \"src/**/*\" -c \"npm run build\"",
 		"test:build-reset-open": "npm run build && npm run test:reset-permissions && npm run test:clean-data && npm run test:open-app",
 		"test:reset-permissions": "sudo tccutil reset All com.mattdanielmurphy.podcast-transcript-extractor",
