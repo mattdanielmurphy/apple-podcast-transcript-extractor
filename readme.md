@@ -1,6 +1,7 @@
 <p align="center">
   <img width="128" alt="app-icon" src="https://github.com/user-attachments/assets/1191747e-1034-4eef-ae1b-eb55fc06e3e2" />
 </p>
+
 # Apple Podcasts Transcript Extractor
 
 This tool extracts transcripts from the Podcasts app on macOS.
