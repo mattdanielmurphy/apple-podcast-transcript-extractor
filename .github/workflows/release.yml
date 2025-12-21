@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install Tauri dependencies (macOS)
+        run: |
+          brew install gtk+3 librsvg
+          # Tauri's macOS dependencies are mostly preinstalled on the runner
+
+      - name: Build Tauri app
+        run: cargo tauri build --verbose
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ApplePodcastTranscriptExtractor.app
+          path: src-tauri/target/release/bundle/macos/*.app
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/bundle/macos/*.app
+          generate_release_notes: true
+          draft: false
+          prerelease: false

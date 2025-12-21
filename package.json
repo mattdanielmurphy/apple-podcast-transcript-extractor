@@ -1,6 +1,17 @@
 {
+	"name": "apple-podcast-transcript-extractor",
+	"version": "0.1.0",
+	"description": "Extract transcripts from Apple Podcasts on macOS",
+	"scripts": {
+		"tauri": "tauri",
+		"dev": "tauri dev",
+		"build": "tauri build"
+	},
 	"dependencies": {
-		"xml2js": "^0.6.2",
-		"sqlite3": "^5.1.6"
+		"sqlite3": "^5.1.6",
+		"xml2js": "^0.6.2"
+	},
+	"devDependencies": {
+		"@tauri-apps/cli": "^2.9.6"
 	}
 }

@@ -1,0 +1,11 @@
+identifier = "default"
+description = "Allows all custom app commands"
+
+[[commands.allow]]
+name = "scan_episodes"
+
+[[commands.allow]]
+name = "extract_transcript_command"
+
+[[commands.allow]]
+name = "open_path"

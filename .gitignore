@@ -15,3 +15,14 @@ transcripts/
 .vscode/
 *.swp
 *.swo
+
+# Tauri
+src-tauri/target/
+
+# Local data / Temp
+
+transcript.txt
+
+pbcopy
+
+venv/

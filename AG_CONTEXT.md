@@ -1,0 +1,26 @@
+# AG_CONTEXT.md
+
+- **Project**: apple-podcast-transcript-extractor (macOS)
+- **Purpose**: CLI tool to extract Apple Podcasts transcripts; now also provides a native GUI using Tauri.
+- **Structure**:
+  - `extractTranscript.js` – original Node.js CLI implementation.
+  - `src/` – frontend HTML/CSS/JS for the Tauri GUI.
+  - `src-tauri/` – Rust backend exposing two Tauri commands:
+    - `scan_episodes` – recursively discovers TTML files and fetches metadata from the Apple Podcasts SQLite DB.
+    - `extract_transcript_command` – extracts a transcript (optionally with timestamps) and writes it to the selected output directory. Fixes issue with variable TTML timestamp formats (e.g., H:M:S).
+    - `get_transcript` – returns parsed paragraphs for a specific episode for in-app viewing.
+    - `search_episodes_content` – performs a fast substring search across all episodes' raw transcript files.
+  - `src-tauri/src/transcript.rs` – core logic for scanning, metadata lookup, TTML parsing (robust timestamp support), and file writing.
+  - `src-tauri/src/lib.rs` – registers the commands and plugins (dialog, log).
+- **Features**:
+  - **In-App Viewer**: View transcript content directly within the application.
+  - **Search Highlighting**: Highlights search matches within the transcript viewer when using content search.
+  - **Flexible Extraction**: Extract single transcripts from the viewer or batch extract selected episodes.
+- **Build**:
+  - `npm install` – install Node dependencies.
+  - `npm run dev` – start a dev server (optional for UI preview).
+  - `npm run build` – bundle the frontend.
+  - `cargo tauri dev` – run the app locally.
+  - `cargo tauri build` – produce a signed `.app` bundle (requires a paid Apple Developer account for distribution).
+- **Release**: GitHub Actions workflow (`.github/workflows/release.yml`) builds and uploads the `.app` artifact.
+- **Future**: Keep CLI unchanged for scriptable usage; GUI provides a user‑friendly interface for non‑technical users.

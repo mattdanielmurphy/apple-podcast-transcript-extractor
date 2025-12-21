@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Apple Podcasts Transcript Extractor</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<div class="app-container">
+			<!-- Toolbar -->
+			<header class="app-header" data-tauri-drag-region>
+				<div class="header-content" data-tauri-drag-region>
+					<div class="logo-section">
+						<svg class="app-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+							<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" fill="currentColor" />
+						</svg>
+						<h1 class="app-title">Transcript Extractor</h1>
+					</div>
+					<div class="header-stats">
+						<div class="stat-item">
+							<span class="stat-label">Episodes:</span>
+							<span class="stat-value" id="total-count">0</span>
+						</div>
+						<div class="stat-item">
+							<span class="stat-label">Selected:</span>
+							<span class="stat-value" id="selected-count">0</span>
+						</div>
+					</div>
+				</div>
+			</header>
+
+			<!-- Main Content -->
+			<main class="main-content">
+				<!-- Controls Sub-Toolbar -->
+				<div class="controls-panel">
+					<div class="control-group">
+						<label class="control-label">Output Directory</label>
+						<div class="input-group">
+							<input type="text" id="output-dir" class="text-input" value="./transcripts" readonly />
+							<button class="btn btn-secondary" id="choose-dir-btn">Browse</button>
+						</div>
+					</div>
+
+					<div class="control-group">
+						<label class="checkbox-label">
+							<input type="checkbox" id="timestamps-checkbox" class="checkbox-input" />
+							<span class="checkbox-text">Include timestamps</span>
+						</label>
+					</div>
+
+					<div class="action-buttons">
+						<button class="btn btn-outline" id="scan-btn">Scan for Episodes</button>
+						<button class="btn btn-primary" id="extract-btn" disabled>Extract Selected</button>
+					</div>
+				</div>
+
+				<!-- Episodes List Area -->
+				<div class="episodes-section">
+					<div class="tabs-header">
+						<button class="tab-btn active" id="tab-new" onclick="setActiveTab('new')">Ready <span class="tab-count" id="count-new">0</span></button>
+						<button class="tab-btn" id="tab-existing" onclick="setActiveTab('existing')">Extracted <span class="tab-count" id="count-existing">0</span></button>
+					</div>
+
+					<div class="episodes-filter-bar">
+						<div class="filter-row">
+							<div class="search-box">
+								<svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path
+										d="M11 19C15.4183 19 19 15.4183 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11C3 15.4183 6.58172 19 11 19Z"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+									<path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								</svg>
+								<input type="text" id="search-input" placeholder="Search by title or podcast (p:xxx for only podcast, t:xxx for only title)..." class="search-input" />
+							</div>
+							<div class="sort-box">
+								<label class="sort-label">Sort:</label>
+								<select id="sort-select" class="sort-select">
+									<option value="date-desc">Published (Newest)</option>
+									<option value="date-asc">Published (Oldest)</option>
+									<option value="download-desc">Downloaded (Newest)</option>
+									<option value="download-asc">Downloaded (Oldest)</option>
+									<option value="podcast-asc">Podcast (A-Z)</option>
+									<option value="title-asc">Title (A-Z)</option>
+								</select>
+							</div>
+						</div>
+						<div class="filter-row">
+							<div class="search-box content-search">
+								<svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path
+										d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+									<path d="M14 2V8H20" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+									<path
+										d="M11 15C12.6569 15 14 13.6569 14 12C14 10.3431 12.6569 9 11 9C9.34315 9 8 10.3431 8 12C8 13.6569 9.34315 15 11 15Z"
+										stroke="currentColor"
+										stroke-width="2"
+										stroke-linecap="round"
+										stroke-linejoin="round"
+									/>
+									<path d="M16 17L13.12 14.12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+								</svg>
+								<input type="text" id="content-search-input" placeholder="Search INSIDE transcript text (global)..." class="search-input" />
+							</div>
+						</div>
+					</div>
+
+					<div class="section-header">
+						<h2 class="section-title" id="current-tab-title">Episodes</h2>
+						<div class="selection-controls">
+							<button class="btn-text" id="select-all-btn">Select All</button>
+							<span class="separator">/</span>
+							<button class="btn-text" id="deselect-all-btn">Deselect All</button>
+						</div>
+					</div>
+
+					<!-- Empty State -->
+					<div class="empty-state" id="empty-state">
+						<h3 class="empty-title">No Episodes Found</h3>
+						<p class="empty-description">Click "Scan for Episodes" to find podcast transcripts</p>
+					</div>
+
+					<!-- Episodes List -->
+					<div class="episodes-list" id="episodes-list"></div>
+				</div>
+
+				<!-- Progress Bar Area -->
+				<div class="progress-section hidden" id="progress-section">
+					<div class="progress-header">
+						<span class="progress-label">Extracting...</span>
+						<span class="progress-count" id="progress-count">0 / 0</span>
+					</div>
+					<div class="progress-bar-container">
+						<div class="progress-bar" id="progress-bar"></div>
+					</div>
+					<div class="progress-current" id="progress-current"></div>
+				</div>
+			</main>
+
+			<!-- Status Bar -->
+			<footer class="status-bar" id="status-bar">
+				<div class="status-message" id="status-message">Ready</div>
+				<button class="btn-text hidden" id="open-folder-btn">Open Output Folder</button>
+			</footer>
+		</div>
+
+		<!-- Transcript Viewer Modal -->
+		<div id="transcript-modal" class="modal hidden">
+			<div class="modal-overlay" id="modal-overlay"></div>
+			<div class="modal-content">
+				<header class="modal-header">
+					<div class="modal-title-info">
+						<h2 id="modal-episode-title" class="modal-episode-title">Episode Title</h2>
+						<p id="modal-podcast-title" class="modal-podcast-title">Podcast Title</p>
+					</div>
+					<div class="modal-header-search">
+						<div class="modal-search-box">
+							<input type="text" id="modal-search-input" placeholder="Search in transcript..." class="search-input" />
+							<div class="modal-search-nav">
+								<span id="modal-search-count" class="search-count">0/0</span>
+								<button id="modal-search-prev" class="btn-icon" title="Previous match">
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+								</button>
+								<button id="modal-search-next" class="btn-icon" title="Next match">
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+								</button>
+							</div>
+						</div>
+					</div>
+					<button class="modal-close-btn" id="modal-close-btn">&times;</button>
+				</header>
+				<div class="modal-body" id="transcript-content">
+					<!-- Transcript content will be injected here -->
+				</div>
+				<footer class="modal-footer">
+					<div class="modal-search-info" id="modal-search-info"></div>
+					<div class="modal-actions">
+						<button class="btn btn-primary" id="modal-extract-btn">Extract This Transcript</button>
+					</div>
+				</footer>
+			</div>
+		</div>
+
+		<script src="main.js"></script>
+	</body>
+</html>
