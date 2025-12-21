@@ -25,6 +25,7 @@
     - **Timestamp Options**: Selection bar now features a split button to choose between "with" and "without" timestamps (defaulting to "with").
     - **Audio Deletion**: Delete the cached audio file for specific episodes directly from the context menu or transcript viewer. Uses AppleScript to move files to the macOS Trash.
     - **Multi-File Reveal**: Uses AppleScript to select multiple files simultaneously in a single Finder window (overcoming `open -R` limitations).
+    - **Orphaned Episode Support**: When a transcript is extracted, the original TTML file is now copied to a local store (`.metadata/ttml/`). This allows orphaned episodes (those deleted from the Apple Podcasts cache) to still be viewed and re-extracted within the app, preserving access to the transcript even after audio deletion.
   - **Entitlements**: Added `Entitlements.plist` (with sandboxing disabled) and configured `tauri.conf.json` to resolve recurring macOS permission prompts and ensure file access persistence.
   - **Settings Persistence**: Remembers the user's preferred output directory using `tauri-plugin-store`. Defaults to a macOS-conventional app data directory.
   - **UX Enhancements**: 

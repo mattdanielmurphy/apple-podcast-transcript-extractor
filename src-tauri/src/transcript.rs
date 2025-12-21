@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 pub struct Episode {
     pub transcript_identifier: String,
     pub file_path: String,
+    pub local_ttml_path: Option<String>,
     pub uuid: Option<String>,
     pub episode_title: Option<String>,
     pub podcast_title: Option<String>,
@@ -116,6 +117,7 @@ fn find_ttml_files_recursive(
             episodes.push(Episode {
                 transcript_identifier: transcript_identifier.clone(),
                 file_path: path.to_string_lossy().to_string(),
+                local_ttml_path: None,
                 uuid,
                 episode_title: metadata.as_ref().and_then(|m| m.get("episode_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
                 podcast_title: metadata.as_ref().and_then(|m| m.get("podcast_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
@@ -209,7 +211,16 @@ pub fn extract_transcript(
     output_dir: &str,
     include_timestamps: bool,
 ) -> Result<(String, String), String> {
-    let ttml_content = fs::read_to_string(&episode.file_path)
+    // Try to read from local copy if original path doesn't exist or if it's already an orphaned episode
+    let ttml_path = if episode.is_orphaned {
+        episode.local_ttml_path.as_ref().ok_or("Orphaned episode has no local TTML path")?
+    } else if !Path::new(&episode.file_path).exists() && episode.local_ttml_path.is_some() {
+        episode.local_ttml_path.as_ref().unwrap()
+    } else {
+        &episode.file_path
+    };
+
+    let ttml_content = fs::read_to_string(ttml_path)
         .map_err(|e| format!("Failed to read TTML file: {}", e))?;
 
     let paragraphs = parse_ttml(&ttml_content)?;
@@ -248,22 +259,36 @@ pub fn extract_transcript(
 
     let filename = format!("{}.txt", base_name);
     let metadata_filename = format!("{}.json", base_name);
+    let ttml_copy_filename = format!("{}.ttml", base_name);
 
     let output_path = PathBuf::from(output_dir).join(&filename);
     let metadata_dir = PathBuf::from(output_dir).join(".metadata");
     let metadata_path = metadata_dir.join(&metadata_filename);
+    let local_ttml_dir = metadata_dir.join("ttml");
+    let local_ttml_path = local_ttml_dir.join(&ttml_copy_filename);
     
-    // Create metadata directory
+    // Create metadata and ttml directories
     fs::create_dir_all(&metadata_dir)
         .map_err(|e| format!("Failed to create metadata directory: {}", e))?;
+    fs::create_dir_all(&local_ttml_dir)
+        .map_err(|e| format!("Failed to create local TTML directory: {}", e))?;
+
+    // Copy TTML file if it's not already there
+    if ttml_path != local_ttml_path.to_string_lossy().as_ref() {
+        fs::copy(ttml_path, &local_ttml_path)
+            .map_err(|e| format!("Failed to copy TTML file to local store: {}", e))?;
+    }
 
     // Write transcript
     fs::write(&output_path, transcript_text)
         .map_err(|e| format!("Failed to write transcript: {}", e))?;
 
     // Write metadata
+    let mut updated_episode = episode.clone();
+    updated_episode.local_ttml_path = Some(local_ttml_path.to_string_lossy().to_string());
+
     let metadata = TranscriptMetadata {
-        episode: episode.clone(),
+        episode: updated_episode,
         include_timestamps,
         extracted_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -323,7 +348,15 @@ pub fn load_extracted_metadata(output_dir: &str) -> Vec<TranscriptMetadata> {
 }
 
 pub fn get_transcript_paragraphs(episode: &Episode) -> Result<Vec<Paragraph>, String> {
-    let ttml_content = fs::read_to_string(&episode.file_path)
+    let path = if episode.is_orphaned {
+        episode.local_ttml_path.as_ref().ok_or("Orphaned episode has no local TTML path")?
+    } else if !Path::new(&episode.file_path).exists() && episode.local_ttml_path.is_some() {
+        episode.local_ttml_path.as_ref().unwrap()
+    } else {
+        &episode.file_path
+    };
+
+    let ttml_content = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read TTML file: {}", e))?;
 
     parse_ttml(&ttml_content)

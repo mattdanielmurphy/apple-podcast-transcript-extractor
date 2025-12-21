@@ -364,12 +364,13 @@ function setupContextMenu() {
 		const isSelected = selectedEpisodes.has(contextMenuTargetIndex)
 
 		// Update menu item visibility/state
-		elements.cmView.style.display = episode.is_orphaned ? "none" : "flex"
+		const canViewSource = !episode.is_orphaned || episode.local_ttml_path
+		elements.cmView.style.display = canViewSource ? "flex" : "none"
 		elements.cmOpen.style.display = isExisting ? "flex" : "none"
 		elements.cmReveal.style.display = isExisting ? "flex" : "none"
 		elements.cmSelect.style.display = isSelected ? "none" : "flex"
 		elements.cmDeselect.style.display = isSelected ? "flex" : "none"
-		elements.cmExtract.style.display = episode.is_orphaned ? "none" : "flex"
+		elements.cmExtract.style.display = canViewSource ? "flex" : "none"
 		elements.cmExtract.querySelector("span").textContent = isExisting ? "Re-extract Transcript" : "Extract Transcript"
 		elements.cmDeleteAudio.style.display = episode.has_audio ? "flex" : "none"
 
@@ -676,6 +677,8 @@ async function scanForEpisodes() {
 
 		// Merge orphaned episodes
 		const allEpisodes = [...foundEpisodes]
+		const foundMap = new Map(foundEpisodes.map((ep) => [ep.transcript_identifier, ep]))
+
 		metadataList.forEach((meta) => {
 			if (!foundIdentifiers.has(meta.episode.transcript_identifier)) {
 				const orphanedEpisode = {
@@ -689,6 +692,12 @@ async function scanForEpisodes() {
 			} else {
 				// Update timestamp state for existing episodes too
 				transcriptTimestampState.set(meta.episode.transcript_identifier, meta.include_timestamps)
+				
+				// Update local_ttml_path for the found episode if we have it in metadata
+				const foundEpisode = foundMap.get(meta.episode.transcript_identifier)
+				if (foundEpisode && meta.episode.local_ttml_path) {
+					foundEpisode.local_ttml_path = meta.episode.local_ttml_path
+				}
 			}
 		})
 
@@ -1062,7 +1071,7 @@ async function viewTranscript(index) {
 	const episode = episodes[index]
 	if (!episode) return
 
-	if (episode.is_orphaned) {
+	if (episode.is_orphaned && !episode.local_ttml_path) {
 		const tauri = getTauri()
 		await tauri.dialog.message("The original transcript source (TTML) has been deleted from the Podcasts cache.\n\nYou can still open the extracted text file using the 'Open File' button.", {
 			title: "Source Deleted",
@@ -1587,7 +1596,7 @@ async function extractTranscripts(includeTimestamps = true) {
 
 		// Extract each episode
 		for (const episode of selectedEpisodesData) {
-			if (episode.is_orphaned) {
+			if (episode.is_orphaned && !episode.local_ttml_path) {
 				completed++ // Mark as "processed" but skip
 				continue
 			}
