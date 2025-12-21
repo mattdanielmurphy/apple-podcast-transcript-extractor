@@ -1,5 +1,6 @@
 {
 	"dependencies": {
-		"xml2js": "^0.6.2"
+		"xml2js": "^0.6.2",
+		"sqlite3": "^5.1.6"
 	}
 }
