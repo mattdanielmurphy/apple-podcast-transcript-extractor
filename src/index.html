@@ -6,66 +6,99 @@
 		<title>Apple Podcasts Transcript Extractor</title>
 		<link rel="stylesheet" href="styles.css" />
 	</head>
+
 	<body>
-		<div class="app-container">
+		<div class="app" role="application" aria-label="Transcript Extractor">
 			<!-- Toolbar -->
-			<header class="app-header" data-tauri-drag-region>
+			<header id="titlebar" class="titlebar app-header" data-tauri-drag-region>
 				<div class="header-content" data-tauri-drag-region>
-					<div class="logo-section">
-						<svg class="app-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-							<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" fill="currentColor" />
-						</svg>
-						<h1 class="app-title">Transcript Extractor</h1>
+					<div class="logo-section" data-tauri-drag-region>
+						<h1 class="app-title" data-tauri-drag-region>Transcript Extractor</h1>
+						<button type="button" class="btn btn-outline btn-small" id="open-podcasts-btn" title="Open macOS Podcasts app">
+							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M12 1a11 11 0 1 0 11 11A11 11 0 0 0 12 1zm0 18a7 7 0 1 1 7-7 7 7 0 0 1-7 7z" />
+								<circle cx="12" cy="12" r="3" />
+							</svg>
+							<span>Open Podcasts</span>
+						</button>
 					</div>
-					<div class="header-stats">
-						<div class="stat-item">
-							<span class="stat-label">Episodes:</span>
-							<span class="stat-value" id="total-count">0</span>
+					<!-- Controls -->
+					<section class="panel controls-panel" aria-label="Controls">
+						<div class="control-group">
+							<label class="control-label" for="output-dir">Output Directory</label>
+							<div class="input-group">
+								<input type="text" id="output-dir" class="text-input" placeholder="Loading default path…" />
+								<button type="button" class="btn btn-secondary" id="choose-dir-btn">Browse</button>
+								<button type="button" class="btn btn-outline" id="reset-dir-btn" title="Reset to default macOS application data path">Reset</button>
+							</div>
 						</div>
-						<div class="stat-item">
-							<span class="stat-label">Selected:</span>
-							<span class="stat-value" id="selected-count">0</span>
+						<div class="action-buttons">
+							<button type="button" class="btn btn-outline" id="scan-btn">
+								<span class="btn-spinner" id="scan-spinner"></span>
+								<span class="btn-text-content">Scan for Episodes</span>
+							</button>
 						</div>
-					</div>
+					</section>
 				</div>
 			</header>
 
-			<!-- Main Content -->
-			<main class="main-content">
-				<!-- Controls Sub-Toolbar -->
-				<div class="controls-panel">
-					<div class="control-group">
-						<label class="control-label">Output Directory</label>
-						<div class="input-group">
-							<input type="text" id="output-dir" class="text-input" value="./transcripts" readonly />
-							<button class="btn btn-secondary" id="choose-dir-btn">Browse</button>
+			<main class="main" aria-label="Main content">
+				<!-- Progress -->
+				<section class="panel progress-section hidden" id="progress-section" aria-label="Progress">
+					<div class="progress-header">
+						<span class="progress-label">Extracting…</span>
+						<span class="progress-count" id="progress-count">0 / 0</span>
+					</div>
+					<div class="progress-bar-container" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+						<div class="progress-bar" id="progress-bar"></div>
+					</div>
+					<div class="progress-current" id="progress-current"></div>
+				</section>
+
+				<!-- Success -->
+				<section class="panel success-section hidden" id="success-section" aria-label="Extraction Success">
+					<button type="button" class="success-close-btn" id="success-close-btn" aria-label="Dismiss success message">&times;</button>
+					<div class="success-content">
+						<div class="success-icon">
+							<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--success)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+								<polyline points="20 6 9 17 4 12"></polyline>
+							</svg>
+						</div>
+						<div class="success-message-large" id="success-message-large">Extraction Complete</div>
+						<div class="success-actions">
+							<button type="button" class="btn btn-primary btn-large" id="success-open-folder-btn">
+								<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+								</svg>
+								Open Output Folder
+							</button>
+							<button type="button" class="btn btn-outline btn-large" id="success-ok-btn">OK</button>
+						</div>
+					</div>
+				</section>
+
+				<!-- Episodes -->
+				<section class="episodes" aria-label="Episodes">
+					<div class="tabs-header" role="tablist" aria-label="Episode tabs">
+						<button type="button" class="tab-btn active" id="tab-new" role="tab" aria-selected="true" aria-controls="episodes-list" data-tab="new" onclick="setActiveTab('new')">
+							Unextracted <span class="tab-count" id="count-new">0</span>
+						</button>
+
+						<button type="button" class="tab-btn" id="tab-existing" role="tab" aria-selected="false" aria-controls="episodes-list" data-tab="existing" onclick="setActiveTab('existing')">
+							Extracted <span class="tab-count" id="count-existing">0</span>
+						</button>
+
+						<div class="selection-controls">
+							<button type="button" class="btn-text" id="select-all-btn">Select All</button>
+							<span class="separator" aria-hidden="true">/</span>
+							<button type="button" class="btn-text" id="deselect-all-btn">Deselect All</button>
 						</div>
 					</div>
 
-					<div class="control-group">
-						<label class="checkbox-label">
-							<input type="checkbox" id="timestamps-checkbox" class="checkbox-input" />
-							<span class="checkbox-text">Include timestamps</span>
-						</label>
-					</div>
-
-					<div class="action-buttons">
-						<button class="btn btn-outline" id="scan-btn">Scan for Episodes</button>
-						<button class="btn btn-primary" id="extract-btn" disabled>Extract Selected</button>
-					</div>
-				</div>
-
-				<!-- Episodes List Area -->
-				<div class="episodes-section">
-					<div class="tabs-header">
-						<button class="tab-btn active" id="tab-new" onclick="setActiveTab('new')">Ready <span class="tab-count" id="count-new">0</span></button>
-						<button class="tab-btn" id="tab-existing" onclick="setActiveTab('existing')">Extracted <span class="tab-count" id="count-existing">0</span></button>
-					</div>
-
-					<div class="episodes-filter-bar">
+					<div class="panel episodes-filter-bar" aria-label="Filters">
 						<div class="filter-row">
 							<div class="search-box">
-								<svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
 									<path
 										d="M11 19C15.4183 19 19 15.4183 19 11C19 6.58172 15.4183 3 11 3C6.58172 3 3 6.58172 3 11C3 15.4183 6.58172 19 11 19Z"
 										stroke="currentColor"
@@ -75,11 +108,19 @@
 									/>
 									<path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 								</svg>
-								<input type="text" id="search-input" placeholder="Search by title or podcast (p:xxx for only podcast, t:xxx for only title)..." class="search-input" />
+
+								<input type="text" id="search-input" class="search-input" placeholder="Search by title or podcast (p:xxx for only podcast, t:xxx for only title)…" autocomplete="off" />
+								<button type="button" id="filter-selection-btn" class="btn btn-outline search-filter-btn" title="Only show selected episodes">
+									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />
+									</svg>
+									<span>Filter by Selection</span>
+								</button>
 							</div>
+
 							<div class="sort-box">
-								<label class="sort-label">Sort:</label>
-								<select id="sort-select" class="sort-select">
+								<select id="sort-select" class="sort-select" aria-label="Sort episodes">
+									<option value="podcast-date-desc" selected>Podcast & Date</option>
 									<option value="date-desc">Published (Newest)</option>
 									<option value="date-asc">Published (Oldest)</option>
 									<option value="download-desc">Downloaded (Newest)</option>
@@ -89,9 +130,10 @@
 								</select>
 							</div>
 						</div>
+
 						<div class="filter-row">
 							<div class="search-box content-search">
-								<svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
 									<path
 										d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z"
 										stroke="currentColor"
@@ -109,85 +151,234 @@
 									/>
 									<path d="M16 17L13.12 14.12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 								</svg>
-								<input type="text" id="content-search-input" placeholder="Search INSIDE transcript text (global)..." class="search-input" />
+
+								<input type="text" id="content-search-input" class="search-input" placeholder="Search all transcript text (as filtered by the above)…" autocomplete="off" />
 							</div>
 						</div>
 					</div>
 
-					<div class="section-header">
-						<h2 class="section-title" id="current-tab-title">Episodes</h2>
-						<div class="selection-controls">
-							<button class="btn-text" id="select-all-btn">Select All</button>
-							<span class="separator">/</span>
-							<button class="btn-text" id="deselect-all-btn">Deselect All</button>
+					<div class="empty-state" id="empty-state">
+						<h3 class="empty-title">No Episodes Found</h3>
+						<p class="empty-description">Click <button type="button" class="btn-text" style="vertical-align: baseline; padding: 0 4px;" onclick="scanForEpisodes()">Scan for Episodes</button> to find podcast transcripts.</p>
+					</div>
+
+					<div class="episodes-list" id="episodes-list" role="list" aria-label="Episodes list"></div>
+				</section>
+			</main>
+
+			<!-- Selection Action Bar -->
+			<div id="selection-bar" class="selection-bar hidden">
+				<div class="selection-bar-content">
+					<div class="selection-info">
+						<span class="selection-count-badge" id="bar-selected-count">0</span>
+						<span class="selection-label">selected</span>
+					</div>
+
+					<div class="selection-actions">
+						<div class="action-group">
+							<div class="btn-group" id="bar-extract-group">
+								<button type="button" class="btn btn-primary" id="bar-extract-btn">
+									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+										<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+										<polyline points="7 10 12 15 17 10" />
+										<line x1="12" y1="15" x2="12" y2="3" />
+									</svg>
+									<span>Extract</span>
+								</button>
+								<button type="button" class="btn btn-primary btn-dropdown-toggle" id="bar-extract-dropdown-btn" title="Extraction options">
+									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5">
+										<polyline points="6 9 12 15 18 9"></polyline>
+									</svg>
+								</button>
+								<div class="dropdown-menu hidden" id="bar-extract-dropdown-menu">
+									<button type="button" class="dropdown-item" id="bar-extract-with-timestamps-btn">Extract with Timestamps</button>
+									<button type="button" class="dropdown-item" id="bar-extract-no-timestamps-btn">Extract without Timestamps</button>
+								</div>
+							</div>
+						</div>
+
+						<div class="action-divider" id="bar-transcripts-divider"></div>
+
+						<div class="action-group" id="bar-transcripts-group">
+							<span class="group-label">Transcripts</span>
+							<button type="button" class="btn btn-outline btn-small" id="bar-reveal-transcripts-btn">Reveal</button>
+							<button type="button" class="btn btn-outline btn-small" id="bar-open-transcripts-btn">Open</button>
+						</div>
+
+						<div class="action-divider"></div>
+
+						<div class="action-group">
+							<span class="group-label">Audio</span>
+							<button type="button" class="btn btn-outline btn-small" id="bar-reveal-audio-btn">Reveal</button>
+							<button type="button" class="btn btn-outline btn-small" id="bar-open-audio-btn">Open</button>
+							<button type="button" class="btn btn-outline btn-small btn-danger" id="bar-delete-audio-btn">Delete</button>
 						</div>
 					</div>
 
-					<!-- Empty State -->
-					<div class="empty-state" id="empty-state">
-						<h3 class="empty-title">No Episodes Found</h3>
-						<p class="empty-description">Click "Scan for Episodes" to find podcast transcripts</p>
-					</div>
-
-					<!-- Episodes List -->
-					<div class="episodes-list" id="episodes-list"></div>
+					<button type="button" class="btn-icon" id="bar-close-btn" title="Deselect All">
+						<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+							<line x1="18" y1="6" x2="6" y2="18" />
+							<line x1="6" y1="6" x2="18" y2="18" />
+						</svg>
+					</button>
 				</div>
+			</div>
 
-				<!-- Progress Bar Area -->
-				<div class="progress-section hidden" id="progress-section">
-					<div class="progress-header">
-						<span class="progress-label">Extracting...</span>
-						<span class="progress-count" id="progress-count">0 / 0</span>
-					</div>
-					<div class="progress-bar-container">
-						<div class="progress-bar" id="progress-bar"></div>
-					</div>
-					<div class="progress-current" id="progress-current"></div>
-				</div>
-			</main>
-
-			<!-- Status Bar -->
-			<footer class="status-bar" id="status-bar">
-				<div class="status-message" id="status-message">Ready</div>
-				<button class="btn-text hidden" id="open-folder-btn">Open Output Folder</button>
+			<!-- Status -->
+			<footer class="status-bar hidden" id="status-bar">
+				<div class="status-message" id="status-message" role="status" aria-live="polite">READY</div>
+				<button type="button" class="btn-text hidden" id="open-folder-btn">Open Output Folder</button>
 			</footer>
 		</div>
 
-		<!-- Transcript Viewer Modal -->
-		<div id="transcript-modal" class="modal hidden">
-			<div class="modal-overlay" id="modal-overlay"></div>
-			<div class="modal-content">
+		<!-- Modal -->
+		<div id="transcript-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-episode-title">
+			<button type="button" class="modal-overlay" id="modal-overlay" aria-label="Close transcript viewer"></button>
+
+			<div class="modal-content" role="document">
 				<header class="modal-header">
 					<div class="modal-title-info">
 						<h2 id="modal-episode-title" class="modal-episode-title">Episode Title</h2>
 						<p id="modal-podcast-title" class="modal-podcast-title">Podcast Title</p>
 					</div>
+
 					<div class="modal-header-search">
 						<div class="modal-search-box">
-							<input type="text" id="modal-search-input" placeholder="Search in transcript..." class="search-input" />
-							<div class="modal-search-nav">
+							<label class="sr-only" for="modal-search-input">Search within transcript</label>
+							<input type="text" id="modal-search-input" placeholder="Search in transcript…" class="search-input" autocomplete="off" />
+
+							<div class="modal-search-nav" aria-label="Search navigation">
 								<span id="modal-search-count" class="search-count">0/0</span>
-								<button id="modal-search-prev" class="btn-icon" title="Previous match">
-									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+
+								<button type="button" id="modal-search-prev" class="btn-icon" title="Previous match" aria-label="Previous match">
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+										<path d="m18 15-6-6-6 6" />
+									</svg>
 								</button>
-								<button id="modal-search-next" class="btn-icon" title="Next match">
-									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+
+								<button type="button" id="modal-search-next" class="btn-icon" title="Next match" aria-label="Next match">
+									<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+										<path d="m6 9 6 6 6-6" />
+									</svg>
 								</button>
 							</div>
 						</div>
 					</div>
-					<button class="modal-close-btn" id="modal-close-btn">&times;</button>
+
+					<button type="button" class="modal-close-btn" id="modal-close-btn" aria-label="Close transcript viewer">&times;</button>
 				</header>
-				<div class="modal-body" id="transcript-content">
-					<!-- Transcript content will be injected here -->
-				</div>
+
+				<div class="modal-body" id="transcript-content" aria-label="Transcript content"></div>
+
 				<footer class="modal-footer">
 					<div class="modal-search-info" id="modal-search-info"></div>
 					<div class="modal-actions">
-						<button class="btn btn-primary" id="modal-extract-btn">Extract This Transcript</button>
+						<div class="action-group">
+							<button type="button" class="btn btn-outline btn-small" id="modal-copy-btn" title="Copy Episode Title">
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+									<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+									<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+								</svg>
+								<span>Copy Title</span>
+							</button>
+							<button type="button" class="btn btn-outline btn-small" id="modal-select-toggle-btn">
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+									<polyline points="20 6 9 17 4 12" />
+								</svg>
+								<span>Select</span>
+							</button>
+						</div>
+
+						<div class="action-divider"></div>
+
+						<div class="action-group">
+							<span class="group-label">Transcript</span>
+							<button type="button" class="btn btn-outline btn-small" id="modal-reveal-btn">Reveal</button>
+							<button type="button" class="btn btn-outline btn-small" id="modal-open-btn">Open</button>
+							<button type="button" class="btn btn-outline btn-small" id="modal-extract-btn">
+								<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="7 10 12 15 17 10" />
+									<line x1="12" y1="15" x2="12" y2="3" />
+								</svg>
+								<span>Extract</span>
+							</button>
+						</div>
+
+						<div class="action-divider"></div>
+
+						<div class="action-group">
+							<span class="group-label">Audio</span>
+							<button type="button" class="btn btn-outline btn-small" id="modal-reveal-audio-btn">Reveal</button>
+							<button type="button" class="btn btn-outline btn-small" id="modal-open-audio-btn">Open</button>
+							<button type="button" class="btn btn-outline btn-small btn-danger" id="modal-delete-audio-btn">Delete</button>
+						</div>
 					</div>
 				</footer>
 			</div>
+		</div>
+
+		<!-- Context Menu -->
+		<div id="context-menu" class="context-menu hidden" role="menu">
+			<button class="context-menu-item" id="cm-view" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+					<circle cx="12" cy="12" r="3" />
+				</svg>
+				<span>View Transcript</span>
+			</button>
+			<button class="context-menu-item" id="cm-open" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+					<polyline points="15 3 21 3 21 9" />
+					<line x1="10" y1="14" x2="21" y2="3" />
+				</svg>
+				<span>Open File</span>
+			</button>
+			<button class="context-menu-item" id="cm-reveal" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+					<line x1="3" y1="10" x2="21" y2="10" />
+				</svg>
+				<span>Reveal in Finder</span>
+			</button>
+			<div class="context-menu-divider"></div>
+			<button class="context-menu-item" id="cm-select" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="20 6 9 17 4 12" />
+				</svg>
+				<span>Select Episode</span>
+			</button>
+			<button class="context-menu-item" id="cm-deselect" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<line x1="18" y1="6" x2="6" y2="18" />
+					<line x1="6" y1="6" x2="18" y2="18" />
+				</svg>
+				<span>Deselect Episode</span>
+			</button>
+			<div class="context-menu-divider"></div>
+			<button class="context-menu-item" id="cm-extract" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+					<polyline points="7 10 12 15 17 10" />
+					<line x1="12" y1="15" x2="12" y2="3" />
+				</svg>
+				<span>Extract Transcript</span>
+			</button>
+			<button class="context-menu-item cm-danger" id="cm-delete-audio" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<polyline points="3 6 5 6 21 6"></polyline>
+					<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+				</svg>
+				<span>Delete Audio</span>
+			</button>
+			<button class="context-menu-item" id="cm-copy-title" role="menuitem">
+				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+					<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+					<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+				</svg>
+				<span>Copy Episode Title</span>
+			</button>
 		</div>
 
 		<script src="main.js"></script>

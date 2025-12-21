@@ -11,12 +11,15 @@ use std::path::{Path, PathBuf};
 pub struct Episode {
     pub transcript_identifier: String,
     pub file_path: String,
+    pub uuid: Option<String>,
     pub episode_title: Option<String>,
     pub podcast_title: Option<String>,
     pub author: Option<String>,
     pub category: Option<String>,
     pub pub_date: Option<f64>,
     pub import_date: Option<f64>,
+    pub has_audio: bool,
+    pub is_orphaned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -30,12 +33,29 @@ pub fn get_podcasts_base_dir() -> PathBuf {
     PathBuf::from(home).join("Library/Group Containers/243LU875E5.groups.com.apple.podcasts")
 }
 
+pub fn get_cache_dir() -> PathBuf {
+    get_podcasts_base_dir().join("Library/Cache")
+}
+
 pub fn get_ttml_dir() -> PathBuf {
     get_podcasts_base_dir().join("Library/Cache/Assets/TTML")
 }
 
 pub fn get_database_path() -> PathBuf {
     get_podcasts_base_dir().join("Documents/MTLibrary.sqlite")
+}
+
+pub fn get_audio_path(uuid: &str) -> Option<PathBuf> {
+    let cache_dir = get_cache_dir();
+    let mp3_path = cache_dir.join(format!("{}.mp3", uuid));
+    if mp3_path.exists() {
+        return Some(mp3_path);
+    }
+    let m4a_path = cache_dir.join(format!("{}.m4a", uuid));
+    if m4a_path.exists() {
+        return Some(m4a_path);
+    }
+    None
 }
 
 pub fn scan_ttml_files() -> Result<Vec<Episode>, String> {
@@ -88,21 +108,24 @@ fn find_ttml_files_recursive(
                 relative_str.clone()
             };
 
-            if transcript_identifier.starts_with("PodcastContent") {
-                let metadata = query_episode_metadata(conn, &transcript_identifier);
+            let metadata = query_episode_metadata(conn, &transcript_identifier);
 
-                episodes.push(Episode {
-                    transcript_identifier: transcript_identifier.clone(),
-                    file_path: path.to_string_lossy().to_string(),
-                    episode_title: metadata.as_ref().and_then(|m| m.get("episode_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                    podcast_title: metadata.as_ref().and_then(|m| m.get("podcast_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                    author: metadata.as_ref().and_then(|m| m.get("author").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                    category: metadata.as_ref().and_then(|m| m.get("category").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                    pub_date: metadata.as_ref().and_then(|m| m.get("pub_date").cloned().and_then(|v| v.as_f64())),
-                    import_date: metadata.as_ref().and_then(|m| m.get("import_date").cloned().and_then(|v| v.as_f64())),
-                });
-            }
-        }
+            let uuid = metadata.as_ref().and_then(|m| m.get("uuid").cloned().and_then(|v| v.as_str().map(|s| s.to_string())));
+            let has_audio = uuid.as_ref().map(|u| get_audio_path(u).is_some()).unwrap_or(false);
+
+            episodes.push(Episode {
+                transcript_identifier: transcript_identifier.clone(),
+                file_path: path.to_string_lossy().to_string(),
+                uuid,
+                episode_title: metadata.as_ref().and_then(|m| m.get("episode_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                podcast_title: metadata.as_ref().and_then(|m| m.get("podcast_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                author: metadata.as_ref().and_then(|m| m.get("author").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                category: metadata.as_ref().and_then(|m| m.get("category").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                                    pub_date: metadata.as_ref().and_then(|m| m.get("pub_date").cloned().and_then(|v| v.as_f64())),
+                                    import_date: metadata.as_ref().and_then(|m| m.get("import_date").cloned().and_then(|v| v.as_f64())),
+                                    has_audio,
+                                    is_orphaned: false,
+                                });        }
     }
 
     Ok(())
@@ -119,7 +142,8 @@ fn query_episode_metadata(
             p.ZAUTHOR as author,
             p.ZCATEGORY as category,
             e.ZPUBDATE as pub_date,
-            e.ZIMPORTDATE as import_date
+            e.ZIMPORTDATE as import_date,
+            e.ZUUID as uuid
         FROM ZMTEPISODE e
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
         WHERE e.ZTRANSCRIPTIDENTIFIER = ?1
@@ -146,6 +170,9 @@ fn query_episode_metadata(
         if let Ok(import_date) = row.get::<_, f64>(5) {
             map.insert("import_date".to_string(), serde_json::Value::Number(serde_json::Number::from_f64(import_date).unwrap()));
         }
+        if let Ok(uuid) = row.get::<_, String>(6) {
+            map.insert("uuid".to_string(), serde_json::Value::String(uuid));
+        }
 
         Ok(map)
     })
@@ -168,6 +195,13 @@ pub fn search_episodes_content(query: String, episodes: Vec<Episode>) -> Vec<usi
     }
 
     results
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptMetadata {
+    pub episode: Episode,
+    pub include_timestamps: bool,
+    pub extracted_at: f64,
 }
 
 pub fn extract_transcript(
@@ -204,20 +238,88 @@ pub fn extract_transcript(
     fs::create_dir_all(output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
-    // Generate filename
-    let filename = if let (Some(podcast), Some(episode_title)) = 
+    // Generate filenames
+    let base_name = if let (Some(podcast), Some(episode_title)) = 
         (&episode.podcast_title, &episode.episode_title) {
-        format!("{}.txt", sanitize_filename(&format!("{} - {}", podcast, episode_title)))
+        sanitize_filename(&format!("{} - {}", podcast, episode_title))
     } else {
-        format!("{}.txt", episode.transcript_identifier.replace("/", "_"))
+        episode.transcript_identifier.replace("/", "_")
     };
 
+    let filename = format!("{}.txt", base_name);
+    let metadata_filename = format!("{}.json", base_name);
+
     let output_path = PathBuf::from(output_dir).join(&filename);
+    let metadata_dir = PathBuf::from(output_dir).join(".metadata");
+    let metadata_path = metadata_dir.join(&metadata_filename);
     
+    // Create metadata directory
+    fs::create_dir_all(&metadata_dir)
+        .map_err(|e| format!("Failed to create metadata directory: {}", e))?;
+
+    // Write transcript
     fs::write(&output_path, transcript_text)
         .map_err(|e| format!("Failed to write transcript: {}", e))?;
 
+    // Write metadata
+    let metadata = TranscriptMetadata {
+        episode: episode.clone(),
+        include_timestamps,
+        extracted_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64(),
+    };
+
+    let metadata_json = serde_json::to_string_pretty(&metadata)
+        .map_err(|e| format!("Failed to serialize metadata: {}", e))?;
+    
+    fs::write(&metadata_path, metadata_json)
+        .map_err(|e| format!("Failed to write metadata: {}", e))?;
+
     Ok((output_path.to_string_lossy().to_string(), filename))
+}
+
+pub fn load_extracted_metadata(output_dir: &str) -> Vec<TranscriptMetadata> {
+    let mut metadata_list = Vec::new();
+    let base_path = Path::new(output_dir);
+    let metadata_path = base_path.join(".metadata");
+
+    if !base_path.exists() || !base_path.is_dir() {
+        return metadata_list;
+    }
+
+    // Scan .metadata folder if it exists
+    if metadata_path.exists() && metadata_path.is_dir() {
+        if let Ok(entries) = fs::read_dir(metadata_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(metadata) = serde_json::from_str::<TranscriptMetadata>(&content) {
+                            metadata_list.push(metadata);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Also scan base folder for legacy/non-migrated metadata files
+    if let Ok(entries) = fs::read_dir(base_path) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(metadata) = serde_json::from_str::<TranscriptMetadata>(&content) {
+                        metadata_list.push(metadata);
+                    }
+                }
+            }
+        }
+    }
+
+    metadata_list
 }
 
 pub fn get_transcript_paragraphs(episode: &Episode) -> Result<Vec<Paragraph>, String> {
@@ -239,7 +341,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     let get_begin = |e: &quick_xml::events::BytesStart| {
         e.attributes()
             .filter_map(|a| a.ok())
-            .find(|attr| attr.key.as_ref() == b"begin")
+            .find(|attr| attr.key.local_name().as_ref() == b"begin")
             .and_then(|attr| {
                 String::from_utf8(attr.value.to_vec())
                     .ok()
@@ -250,7 +352,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => {
-                match e.name().as_ref() {
+                match e.local_name().as_ref() {
                     b"p" => {
                         in_paragraph = true;
                         current_paragraph = Some(Paragraph {
@@ -272,7 +374,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                 }
             }
             Ok(Event::Empty(e)) => {
-                if e.name().as_ref() == b"p" {
+                if e.local_name().as_ref() == b"p" {
                     paragraphs.push(Paragraph {
                         begin: get_begin(&e),
                         text: String::new(),
@@ -288,7 +390,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                 }
             }
             Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"p" {
+                if e.local_name().as_ref() == b"p" {
                     in_paragraph = false;
                     if let Some(mut para) = current_paragraph.take() {
                         para.text = current_text.trim().to_string();
@@ -363,6 +465,8 @@ fn format_timestamp(seconds: f64) -> String {
     format!("{:02}:{:02}:{:02}", h, m, s)
 }
 
+use std::process::Command;
+
 pub fn sanitize_filename(filename: &str) -> String {
     filename
         .chars()
@@ -374,4 +478,39 @@ pub fn sanitize_filename(filename: &str) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+fn trash_file(path: &Path) -> Result<(), String> {
+    let path_str = path.to_string_lossy();
+    let script = format!("tell application \"Finder\" to delete POSIX file \"{}\"", path_str);
+    
+    Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| format!("Failed to execute osascript: {}", e))?;
+    
+    Ok(())
+}
+
+pub fn delete_episode_audio(episode: &Episode) -> Result<(), String> {
+    let uuid = episode.uuid.as_ref().ok_or("Episode has no UUID")?;
+    let audio_path = get_audio_path(uuid).ok_or("Audio file not found")?;
+
+    trash_file(&audio_path).map_err(|e| format!("Failed to move audio file to trash: {}", e))?;
+    Ok(())
+}
+
+pub fn delete_multiple_episodes_audio(episodes: &[Episode]) -> Result<usize, String> {
+    let mut count = 0;
+    for episode in episodes {
+        if let Some(uuid) = &episode.uuid {
+            if let Some(audio_path) = get_audio_path(uuid) {
+                if trash_file(&audio_path).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+    }
+    Ok(count)
 }

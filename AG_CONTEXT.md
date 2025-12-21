@@ -5,17 +5,36 @@
 - **Structure**:
   - `extractTranscript.js` – original Node.js CLI implementation.
   - `src/` – frontend HTML/CSS/JS for the Tauri GUI.
-  - `src-tauri/` – Rust backend exposing two Tauri commands:
+  - `src-tauri/` – Rust backend exposing several Tauri commands:
     - `scan_episodes` – recursively discovers TTML files and fetches metadata from the Apple Podcasts SQLite DB.
-    - `extract_transcript_command` – extracts a transcript (optionally with timestamps) and writes it to the selected output directory. Fixes issue with variable TTML timestamp formats (e.g., H:M:S).
-    - `get_transcript` – returns parsed paragraphs for a specific episode for in-app viewing.
-    - `search_episodes_content` – performs a fast substring search across all episodes' raw transcript files.
-  - `src-tauri/src/transcript.rs` – core logic for scanning, metadata lookup, TTML parsing (robust timestamp support), and file writing.
-  - `src-tauri/src/lib.rs` – registers the commands and plugins (dialog, log).
+    - `extract_transcript_command` – extracts a transcript (optionally with timestamps).
+    - `get_transcript` – returns parsed paragraphs for a specific episode for in-app viewing. Uses a namespace-aware TTML parser for better compatibility.
+    - `search_episodes_content` – performs a fast substring search across all episodes.
+    - `get_default_transcript_directory` – returns platform app data directory.
+    - `delete_audio` – deletes the audio file for a given episode.
+  - `src-tauri/src/transcript.rs` – core logic for scanning, metadata lookup, TTML parsing (namespace-aware, robust timestamp support), and file writing.
+- **Recent Fixes**:
+  - Fixed Success Banner being visible on launch and non-dismissible by correcting a broken CSS rule (missing brace in `styles.css`).
+  - Improved Transcript View reliability by making the TTML parser namespace-aware (handling `<tt:p>` etc.).
+  - Resolved UI issues where `.hidden` class was ignored due to CSS parsing errors.
+  - Fixed selection bar syntax error and listener registration issues in `main.js`.
 - **Features**:
   - **In-App Viewer**: View transcript content directly within the application.
   - **Search Highlighting**: Highlights search matches within the transcript viewer when using content search.
   - **Flexible Extraction**: Extract single transcripts from the viewer or batch extract selected episodes.
+    - **Timestamp Options**: Selection bar now features a split button to choose between "with" and "without" timestamps (defaulting to "with").
+    - **Audio Deletion**: Delete the cached audio file for specific episodes directly from the context menu or transcript viewer. Uses AppleScript to move files to the macOS Trash.
+    - **Multi-File Reveal**: Uses AppleScript to select multiple files simultaneously in a single Finder window (overcoming `open -R` limitations).
+  - **Entitlements**: Added `Entitlements.plist` (with sandboxing disabled) and configured `tauri.conf.json` to resolve recurring macOS permission prompts and ensure file access persistence.
+  - **Settings Persistence**: Remembers the user's preferred output directory using `tauri-plugin-store`. Defaults to a macOS-conventional app data directory.
+  - **UX Enhancements**: 
+    - Default sort set to "Podcast (A-Z)".
+    - Automatic one-time tab switching to "Extracted" when no episodes remain in the "Unextracted" view (while still allowing manual navigation back).
+    - "Scan for Episodes" button is replaced by a loading spinner during the scanning process for better feedback.
+    - Prominent "Success Section" with large text and a primary button for opening the output folder; includes "Ok" and "Close" buttons that dismiss the large view and return the "Open Folder" action to the footer status bar.
+    - Improved progress feedback with immediate bar hiding upon completion.
+    - **Selection Menu**: Added a native "Selection" menu with "Select All" (`Cmd+A`) and "Select None" (`Esc`) actions to manage episode selection across the app.
+    - **Contextual Actions**: Selection bar now contextually hides transcript-related actions when viewing unextracted episodes.
 - **Build**:
   - `npm install` – install Node dependencies.
   - `npm run dev` – start a dev server (optional for UI preview).

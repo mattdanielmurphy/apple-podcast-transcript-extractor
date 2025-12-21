@@ -25,5 +25,6 @@ tauri = { version = "2.9.5", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
+tauri-plugin-store = "2"
 rusqlite = "0.32"
 quick-xml = "0.36"

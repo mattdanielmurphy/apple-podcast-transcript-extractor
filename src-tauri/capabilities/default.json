@@ -11,6 +11,9 @@
     "fs:allow-home-read-recursive",
     "fs:allow-home-write-recursive",
     "dialog:default",
-    "log:default"
+    "log:default",
+    "store:default",
+    "core:window:default",
+    "core:window:allow-start-dragging"
   ]
 }
