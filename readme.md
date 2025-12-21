@@ -1,3 +1,6 @@
+<p align="center">
+  <img width="128" alt="app-icon" src="https://github.com/user-attachments/assets/1191747e-1034-4eef-ae1b-eb55fc06e3e2" />
+</p>
 # Apple Podcasts Transcript Extractor
 
 This tool extracts transcripts from the Podcasts app on macOS.
@@ -5,6 +8,10 @@ This tool extracts transcripts from the Podcasts app on macOS.
 ## 🚀 Recommended: macOS Application
 
 The **Transcript Extractor macOS App** is the easiest and most feature-rich way to extract your transcripts. It provides a beautiful, native interface for browsing and exporting transcripts without touching the command line.
+
+<p align="center">
+  <img width="800" alt="image" src="https://github.com/user-attachments/assets/b48b7658-ebaf-4f1e-85cf-1f64818ac042" />
+</p>
 
 ### Why use the App?
 - **Native macOS Interface**: A polished, easy-to-use GUI.
