@@ -27,8 +27,8 @@
     - **Multi-File Reveal**: Uses AppleScript to select multiple files simultaneously in a single Finder window (overcoming `open -R` limitations).
     - **Orphaned Episode Support**: When a transcript is extracted, the original TTML file is now copied to a local store (`.metadata/ttml/`). This allows orphaned episodes (those deleted from the Apple Podcasts cache) to still be viewed and re-extracted within the app, preserving access to the transcript even after audio deletion.
   - **Entitlements**: Added `Entitlements.plist` (with sandboxing disabled) and configured `tauri.conf.json` to resolve recurring macOS permission prompts and ensure file access persistence.
-  - **Explicit Folder Access**: To avoid implicit container access issues and the "access data from other apps" dialog, the app now asks the user to explicitly select the Podcasts group-container directory via a folder picker.
-  - **Settings Persistence**: Remembers the user's preferred output directory and Podcasts data directory using `tauri-plugin-store`.
+  - **Explicit Folder Access**: To gain access to the Apple Podcasts data without triggering implicit permission dialogs, the app now prompts the user once with an explanation dialog before opening a folder picker. Once selected, the path is persisted.
+  - **Settings Persistence**: Remembers the user's preferred output directory and Podcasts data directory (gained via explicit picker) using `tauri-plugin-store`.
   - **UX Enhancements**: 
     - Default sort set to "Podcast (A-Z)".
     - Automatic one-time tab switching to "Extracted" when no episodes remain in the "Unextracted" view (while still allowing manual navigation back).

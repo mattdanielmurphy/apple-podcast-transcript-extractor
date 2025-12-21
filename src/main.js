@@ -13,6 +13,7 @@ let anchorIndex = null // A: anchor index used for Shift ranges
 let lastShiftTarget = null // E: last Shift-click target
 let selectionOverrides = new Map() // T: manual overrides (index -> 'selected' | 'deselected')
 let isScanning = false // Whether a scan is currently in progress
+let podcastsDataDir = "" // Path to the Podcasts group container
 
 // Modal Search State
 let modalSearchQuery = ""
@@ -23,9 +24,6 @@ let currentMatchIndex = -1
 const elements = {
 	totalCount: document.getElementById("total-count"),
 	selectedCount: document.getElementById("selected-count"),
-	podcastsDir: document.getElementById("podcasts-dir"),
-	choosePodcastsDirBtn: document.getElementById("choose-podcasts-dir-btn"),
-	resetPodcastsDirBtn: document.getElementById("reset-podcasts-dir-btn"),
 	outputDir: document.getElementById("output-dir"),
 	chooseDirBtn: document.getElementById("choose-dir-btn"),
 	scanBtn: document.getElementById("scan-btn"),
@@ -143,7 +141,7 @@ async function loadSettings() {
 		elements.outputDir.value = savedPath
 		
 		if (savedPodcastsPath) {
-			elements.podcastsDir.value = savedPodcastsPath
+			podcastsDataDir = savedPodcastsPath
 		}
 
 		await store.save()
@@ -164,7 +162,7 @@ async function saveSettings() {
 		if (tauri && tauri.store) {
 			const store = await tauri.store.load("settings.json")
 			await store.set("output_directory", elements.outputDir.value)
-			await store.set("podcasts_directory", elements.podcastsDir.value)
+			await store.set("podcasts_directory", podcastsDataDir)
 			await store.save()
 		}
 	} catch (error) {
@@ -181,44 +179,6 @@ async function resetDirectory() {
 	} catch (error) {
 		console.error("Error resetting directory:", error)
 		setStatus("Error resetting directory", "error")
-	}
-}
-
-async function resetPodcastsDirectory() {
-	try {
-		const defaultPath = await invokeTauri("get_suggested_podcasts_dir")
-		elements.podcastsDir.value = defaultPath
-		await saveSettings()
-		setStatus("Reset to default Podcasts directory")
-	} catch (error) {
-		console.error("Error resetting Podcasts directory:", error)
-		setStatus("Error resetting Podcasts directory", "error")
-	}
-}
-
-async function choosePodcastsDirectory() {
-	try {
-		const tauri = getTauri()
-		if (!tauri || !tauri.dialog) {
-			throw new Error("Tauri dialog API not available")
-		}
-
-		const suggested = await invokeTauri("get_suggested_podcasts_dir")
-
-		const selected = await tauri.dialog.open({
-			directory: true,
-			multiple: false,
-			defaultPath: elements.podcastsDir.value || suggested,
-		})
-
-		if (selected) {
-			elements.podcastsDir.value = selected
-			await saveSettings()
-			setStatus("Podcasts directory updated")
-		}
-	} catch (error) {
-		console.error("Error choosing Podcasts directory:", error)
-		setStatus("Error choosing Podcasts directory", "error")
 	}
 }
 
@@ -254,9 +214,6 @@ document.getElementById("modal-overlay")?.addEventListener("mousedown", makeDrag
 
 // Event Listeners
 function setupEventListeners() {
-	elements.choosePodcastsDirBtn.addEventListener("click", choosePodcastsDirectory)
-	elements.resetPodcastsDirBtn.addEventListener("click", resetPodcastsDirectory)
-	elements.podcastsDir.addEventListener("change", saveSettings)
 	elements.chooseDirBtn.addEventListener("click", chooseDirectory)
 	elements.resetDirBtn.addEventListener("click", resetDirectory)
 	elements.openPodcastsBtn.addEventListener("click", () => openPath("/System/Applications/Podcasts.app"))
@@ -581,7 +538,7 @@ async function revealSelectedAudio() {
 			.filter((ep) => ep.has_audio)
 
 		await invokeTauri("reveal_audio_multiple", { 
-			podcastsBaseDir: elements.podcastsDir.value,
+			podcastsBaseDir: podcastsDataDir,
 			episodes: selectedEpisodesData 
 		})
 	} catch (error) {
@@ -605,7 +562,7 @@ async function openSelectedAudio() {
 		}
 
 		await invokeTauri("open_audio_multiple", { 
-			podcastsBaseDir: elements.podcastsDir.value,
+			podcastsBaseDir: podcastsDataDir,
 			episodes: selectedEpisodesData 
 		})
 	} catch (error) {
@@ -629,7 +586,7 @@ async function deleteSelectedAudio() {
 	try {
 		setStatus("Moving audio to Trash...")
 		const count = await invokeTauri("delete_multiple_audio", { 
-			podcastsBaseDir: elements.podcastsDir.value,
+			podcastsBaseDir: podcastsDataDir,
 			episodes: selectedEpisodesData 
 		})
 
@@ -706,10 +663,30 @@ async function chooseDirectory() {
 // Scan for episodes
 async function scanForEpisodes() {
 	try {
-		if (!elements.podcastsDir.value) {
-			setStatus("Please select the Podcasts Data Directory first", "error")
-			elements.podcastsDir.focus()
-			return
+		const tauri = getTauri()
+
+		if (!podcastsDataDir) {
+			const confirmed = await tauri.dialog.ask(
+				"To extract transcripts, the app needs access to the Apple Podcasts data folder.\n\n" +
+				"In the next step, please select the folder named '243LU875E5.groups.com.apple.podcasts' (it should be selected by default in the picker).\n\n" +
+				"You should only need to do this once.",
+				{ title: "Access Permission Required", type: "info", okLabel: "Select Folder" }
+			)
+
+			if (!confirmed) return
+
+			const suggested = await invokeTauri("get_suggested_podcasts_dir")
+			const selected = await tauri.dialog.open({
+				directory: true,
+				multiple: false,
+				defaultPath: suggested,
+				title: "Select Apple Podcasts Group Container"
+			})
+
+			if (!selected) return
+
+			podcastsDataDir = selected
+			await saveSettings()
 		}
 
 		needPermission = false
@@ -734,7 +711,7 @@ async function scanForEpisodes() {
 
 		// Call Tauri backend to scan for episodes
 		const foundEpisodes = await invokeTauri("scan_episodes", { 
-			podcastsBaseDir: elements.podcastsDir.value 
+			podcastsBaseDir: podcastsDataDir 
 		})
 
 		// Load orphaned metadata
@@ -1113,7 +1090,7 @@ async function deleteAudioForEpisode(index) {
 	try {
 		setStatus("Deleting audio...")
 		await invokeTauri("delete_audio", { 
-			podcastsBaseDir: elements.podcastsDir.value,
+			podcastsBaseDir: podcastsDataDir,
 			episode: episode 
 		})
 
@@ -1215,7 +1192,7 @@ async function viewTranscript(index) {
 		elements.modalOpenAudioBtn.onclick = async () => {
 			try {
 				await invokeTauri("open_audio", { 
-					podcastsBaseDir: elements.podcastsDir.value,
+					podcastsBaseDir: podcastsDataDir,
 					episode 
 				})
 			} catch (error) {
@@ -1229,7 +1206,7 @@ async function viewTranscript(index) {
 				if (!uuid) return
 				// We need a way to get the path on backend
 				const path = await invokeTauri("get_audio_path_string", { 
-					podcastsBaseDir: elements.podcastsDir.value,
+					podcastsBaseDir: podcastsDataDir,
 					uuid 
 				})
 				if (path) {
