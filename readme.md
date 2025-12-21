@@ -17,7 +17,17 @@ This tool extracts transcripts from the Podcasts app on macOS.
   <img width="900" alt="image" src="https://github.com/user-attachments/assets/0731f40f-68f5-4e08-b316-b5800e5b618b" />
 </p>
 
-### Features
+### Installation (macOS)
+
+1.  Download the latest `Transcript-Extractor.zip` from the [Releases](https://github.com/mattdanielmurphy/apple-podcast-transcript-extractor/releases) page.
+2.  Unzip and drag `Transcript Extractor.app` to your `/Applications` folder.
+3.  **Note for macOS Users**: I currently do not have a paid Apple developer account. As a result, macOS may treat the app as unsafe or "damaged" because it is not notarized. In order to open it, you must run the following command in Terminal after dragging the app to your Applications folder:
+    ```bash
+    xattr -cr /Applications/Transcript\ Extractor.app
+    ```
+    I should have a paid developer account soon so that this won't be an issue.
+
+## Features
 - **Native macOS Interface**: A polished, easy-to-use GUI.
 - **Enhanced Browsing**: Easily search and filter through your downloaded podcast transcripts.
 - **Delete Podcast Audio**: Clean up your disk if you would rather not have the audio downloaded.
