@@ -35,7 +35,7 @@ jobs:
           # Tauri's macOS dependencies are mostly preinstalled on the runner
 
       - name: Build Tauri app
-        run: cargo tauri build --verbose
+        run: npx tauri build --verbose
 
       - name: Zip .app bundle
         run: |
