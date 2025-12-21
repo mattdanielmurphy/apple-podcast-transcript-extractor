@@ -312,11 +312,7 @@ function setupEventListeners() {
 
 	window.addEventListener("keydown", (e) => {
 		if (e.key === "Escape") {
-			if (!elements.modal.classList.contains("hidden")) {
-				closeTranscriptViewer()
-			} else {
-				deselectAll()
-			}
+			handleEscape(e)
 		}
 
 		// Handle Cmd+A (Mac) or Ctrl+A (others)
@@ -330,31 +326,64 @@ function setupEventListeners() {
 				selectAllInTab()
 			}
 		}
+
+		// Handle Cmd+F (Mac) or Ctrl+F (others)
+		if (e.key === "f" && (e.metaKey || e.ctrlKey)) {
+			if (!elements.modal.classList.contains("hidden")) {
+				e.preventDefault()
+				elements.modalSearchInput.focus()
+				elements.modalSearchInput.select()
+			} else {
+				e.preventDefault()
+				elements.searchInput.focus()
+				elements.searchInput.select()
+			}
+		}
 	})
 
 	// Menu events
 	if (window.__TAURI__ && window.__TAURI__.event) {
 		const { listen } = window.__TAURI__.event
 		listen("menu-select-all", () => {
-			// If we are in an input, we might still want to select all text there,
-			// but usually menu actions are more global. 
-			// To be safe and follow user's expectation for the app:
 			const activeElement = document.activeElement
 			const isInput = activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable
 
-			if (!isInput) {
+			if (isInput) {
+				if (typeof activeElement.select === "function") {
+					activeElement.select()
+				} else if (activeElement.isContentEditable) {
+					const range = document.createRange()
+					range.selectNodeContents(activeElement)
+					const sel = window.getSelection()
+					sel.removeAllRanges()
+					sel.addRange(range)
+				}
+			} else {
 				selectAllInTab()
 			}
 		})
 		listen("menu-select-none", () => {
-			deselectAll()
+			handleEscape()
 		})
 	}
 
 	// Hide context menu on click elsewhere
-	document.addEventListener("click", () => {
-		elements.contextMenu.classList.add("hidden")
-	})
+	const hideContextMenu = (e) => {
+		if (elements.contextMenu && !elements.contextMenu.classList.contains("hidden")) {
+			if (!elements.contextMenu.contains(e.target)) {
+				elements.contextMenu.classList.add("hidden")
+				// Intercept and consume the event so it doesn't trigger selection or other actions
+				e.stopPropagation()
+				e.stopImmediatePropagation()
+				e.preventDefault()
+				return true // Was handled
+			}
+		}
+		return false
+	}
+
+	window.addEventListener("mousedown", hideContextMenu, true)
+	window.addEventListener("click", hideContextMenu, true)
 
 	window.addEventListener("blur", () => {
 		elements.contextMenu.classList.add("hidden")
@@ -1702,6 +1731,43 @@ window.setActiveTab = setActiveTab
 window.selectAllInTab = selectAllInTab
 window.deselectAllInTab = deselectAllInTab
 window.togglePodcastSelection = togglePodcastSelection
+
+function handleEscape(e) {
+	// 1. Close Context Menu
+	if (!elements.contextMenu.classList.contains("hidden")) {
+		elements.contextMenu.classList.add("hidden")
+		if (e) {
+			e.preventDefault()
+			e.stopPropagation()
+		}
+		return
+	}
+
+	// 2. Leave text input
+	const activeElement = document.activeElement
+	const isInput = activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable
+	if (isInput) {
+		activeElement.blur()
+		if (e) {
+			e.preventDefault()
+			e.stopPropagation()
+		}
+		return
+	}
+
+	// 3. Close Transcript View
+	if (!elements.modal.classList.contains("hidden")) {
+		closeTranscriptViewer()
+		if (e) {
+			e.preventDefault()
+			e.stopPropagation()
+		}
+		return
+	}
+
+	// 4. Default: Deselect All
+	deselectAll()
+}
 
 // Global select/deselect all (across all tabs)
 function selectAll() {

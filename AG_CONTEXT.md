@@ -36,7 +36,7 @@
     - "Scan for Episodes" button is replaced by a loading spinner during the scanning process for better feedback.
     - Prominent "Success Section" with large text and a primary button for opening the output folder; includes "Ok" and "Close" buttons that dismiss the large view and return the "Open Folder" action to the footer status bar.
     - Improved progress feedback with immediate bar hiding upon completion.
-    - **Selection Menu**: Added a native "Selection" menu with "Select All" (`Cmd+A`) and "Select None" (`Esc`) actions to manage episode selection across the app.
+    - **Selection & Edit Menus**: Restored "Select All" (`Cmd+A`) to the Edit menu and added a native "Selection" menu with "Select All" and "Select None" (`Esc`) actions. Cmd+A is now context-aware: it selects all text if a text field is focused, and selects all episodes in the current list otherwise.
     - **Contextual Actions**: Selection bar now contextually hides transcript-related actions when viewing unextracted episodes.
 - **Build**:
   - `npm install` – install Node dependencies.

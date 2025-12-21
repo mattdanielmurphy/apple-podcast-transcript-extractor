@@ -275,6 +275,8 @@ pub fn run() {
                             &PredefinedMenuItem::cut(handle, None)?,
                             &PredefinedMenuItem::copy(handle, None)?,
                             &PredefinedMenuItem::paste(handle, None)?,
+                            &PredefinedMenuItem::separator(handle)?,
+                            &select_all_i,
                         ],
                     )?,
                     &Submenu::with_items(
