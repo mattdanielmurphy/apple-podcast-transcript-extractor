@@ -16,6 +16,7 @@ This tool extracts transcripts from the Podcasts app on macOS.
 ### Features
 - **Native macOS Interface**: A polished, easy-to-use GUI.
 - **Enhanced Browsing**: Easily search and filter through your downloaded podcast transcripts.
+- **Delete Podcast Audio**: Clean up your disk if you would rather not have the audio downloaded.
 - **One-Click Export**: Quickly save transcripts to your preferred location.
 - **No Setup Required**: Just download and run—no need to install Node.js or run scripts.
 
