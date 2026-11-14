@@ -59,11 +59,11 @@ node extractTranscript.js [--timestamps]
 This will:
 1. Find all TTML files in `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Library/Cache/Assets/TTML`
 2. Create a `./transcripts` directory
-3. Save each transcript as `./transcripts/<podcast_name> - <episode_title>.txt`
+3. Save each transcript as `./transcripts/<podcast_name> - YYYY-MM-DD - <episode_title>.txt`
 
-Note the podcast name and episode title are extracted from the SQLite database at `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Documents/MTLibrary.sqlite`.
+Note the podcast name, episode date and title are extracted from the SQLite database at `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Documents/MTLibrary.sqlite`.
 
-**Duplicate handling**: If multiple episodes have the same podcast name and episode title, the script will add a suffix like `(1)`, `(2)`, etc. to avoid overwriting files.
+**Duplicate handling**: If multiple episodes have the same podcast name, date and episode title, the script will add a suffix like `(1)`, `(2)`, etc. to avoid overwriting files.
 
 Sample output is:
 ```
@@ -85,8 +85,9 @@ Add `--timestamps` to include timestamps for each paragraph in the format `[HH:M
 
 For example:
 ```
-Title: Example episode
-Date: Jan 1, 2025
+Podcast: Example podcast
+Date: 2025-01-01
+Episode: Example episode
 
 Description:
 Example episode description.

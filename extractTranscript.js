@@ -50,11 +50,13 @@ function queryEpisodeMetadata(db, transcriptIdentifier) {
 function formatEpisodeDate(macTimestamp) {
 	if (macTimestamp == null || !Number.isFinite(Number(macTimestamp))) return "Unknown Date"
 
-	return new Date((Number(macTimestamp) + 978307200) * 1000).toLocaleDateString(undefined, {
-		year: "numeric",
-		month: "short",
-		day: "numeric",
-	})
+	const date = new Date((Number(macTimestamp) + 978307200) * 1000)
+	if (!Number.isFinite(date.getTime())) return "Unknown Date"
+
+	const year = date.getFullYear()
+	const month = String(date.getMonth() + 1).padStart(2, "0")
+	const day = String(date.getDate()).padStart(2, "0")
+	return `${year}-${month}-${day}`
 }
 
 function extractTranscript(ttmlContent, outputPath, includeTimestamps = false, metadata = null) {
@@ -96,8 +98,9 @@ function extractTranscript(ttmlContent, outputPath, includeTimestamps = false, m
 		})
 
 		const outputText = [
-			`Title: ${metadata?.episode_title || "Unknown Episode"}`,
+			`Podcast: ${metadata?.podcast_title || "Unknown Podcast"}`,
 			`Date: ${formatEpisodeDate(metadata?.pub_date)}`,
+			`Episode: ${metadata?.episode_title || "Unknown Episode"}`,
 			"",
 			"Description:",
 			metadata?.description || "",
