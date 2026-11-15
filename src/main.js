@@ -1380,6 +1380,7 @@ async function viewTranscript(index) {
 					episode: episode,
 					outputDir: elements.outputDir.value,
 					includeTimestamps: includeTimestamps,
+					episodeDate: formatDate(episode.pub_date) || "Unknown Date",
 				})
 
 				transcriptTimestampState.set(episode.transcript_identifier, includeTimestamps)
@@ -1829,6 +1830,7 @@ async function extractTranscripts(includeTimestamps = true) {
 					episode: episode,
 					outputDir: elements.outputDir.value,
 					includeTimestamps: includeTimestamps,
+					episodeDate: formatDate(episode.pub_date) || "Unknown Date",
 				})
 
 				transcriptTimestampState.set(episode.transcript_identifier, includeTimestamps)

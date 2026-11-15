@@ -85,6 +85,12 @@ Add `--timestamps` to include timestamps for each paragraph in the format `[HH:M
 
 For example:
 ```
+Title: Example episode
+Date: Jan 1, 2025
+
+Description:
+Example episode description.
+
 [00:01:23] This is what the speaker said
 [00:01:25] And then they said this
 ```
