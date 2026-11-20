@@ -85,9 +85,10 @@ pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
     }
 
     let conn = open_podcasts_db(&db_path)?;
+    let metadata_sql = metadata_query(&conn)?;
 
     let mut episodes = Vec::new();
-    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &mut episodes, base_dir)?;
+    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &metadata_sql, &mut episodes, base_dir)?;
 
     Ok(episodes)
 }
@@ -96,6 +97,7 @@ fn find_ttml_files_recursive(
     dir: &Path,
     base_dir: &Path,
     conn: &Connection,
+    metadata_sql: &str,
     episodes: &mut Vec<Episode>,
     podcasts_base_dir: &Path,
 ) -> Result<(), String> {
@@ -107,7 +109,7 @@ fn find_ttml_files_recursive(
         let path = entry.path();
 
         if path.is_dir() {
-            find_ttml_files_recursive(&path, base_dir, conn, episodes, podcasts_base_dir)?;
+            find_ttml_files_recursive(&path, base_dir, conn, metadata_sql, episodes, podcasts_base_dir)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("ttml") {
             let relative_path = path
                 .strip_prefix(base_dir)
@@ -122,7 +124,7 @@ fn find_ttml_files_recursive(
                 relative_str.clone()
             };
 
-            let metadata = query_episode_metadata(conn, &transcript_identifier);
+            let metadata = query_episode_metadata(conn, metadata_sql, &transcript_identifier)?;
 
             let uuid = metadata.as_ref().and_then(|m| m.get("uuid").cloned().and_then(|v| v.as_str().map(|s| s.to_string())));
             let has_audio = uuid.as_ref().map(|u| get_audio_path(podcasts_base_dir, u).is_some()).unwrap_or(false);
@@ -148,11 +150,18 @@ fn find_ttml_files_recursive(
     Ok(())
 }
 
-fn query_episode_metadata(
-    conn: &Connection,
-    transcript_identifier: &str,
-) -> Option<HashMap<String, serde_json::Value>> {
-    let query = "
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    // PRAGMA arguments can't be bound; `table` is always one of our own constants.
+    let names: Result<Vec<String>, rusqlite::Error> = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<Vec<String>, _>>()
+        });
+    names.map(|cols| cols.iter().any(|c| c == column)).unwrap_or(false)
+}
+
+const METADATA_COLUMNS: &str = "
         SELECT
             e.ZTITLE as episode_title,
             p.ZTITLE as podcast_title,
@@ -162,13 +171,46 @@ fn query_episode_metadata(
             e.ZIMPORTDATE as import_date,
             e.ZUUID as uuid,
             e.ZSTORETRACKID as store_id,
-            p.ZSTORECOLLECTIONID as podcast_store_id
+            p.ZSTORECOLLECTIONID as podcast_store_id";
+
+/// Picks the metadata query that matches this database. Newer Podcasts
+/// versions keep the transcript identifier in ZMTMEDIAENCLOSURE (linked to the
+/// episode through ZEPISODE); older ones had it as a column of ZMTEPISODE.
+fn metadata_query(conn: &Connection) -> Result<String, String> {
+    if table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZTRANSCRIPTIDENTIFIER")
+        && table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZEPISODE")
+    {
+        Ok(format!(
+            "{METADATA_COLUMNS}
+        FROM ZMTMEDIAENCLOSURE m
+        JOIN ZMTEPISODE e ON e.Z_PK = m.ZEPISODE
+        JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
+        WHERE m.ZTRANSCRIPTIDENTIFIER = ?1"
+        ))
+    } else if table_has_column(conn, "ZMTEPISODE", "ZTRANSCRIPTIDENTIFIER") {
+        Ok(format!(
+            "{METADATA_COLUMNS}
         FROM ZMTEPISODE e
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
-        WHERE e.ZTRANSCRIPTIDENTIFIER = ?1
-    ";
+        WHERE e.ZTRANSCRIPTIDENTIFIER = ?1"
+        ))
+    } else {
+        Err("Unsupported Apple Podcasts database: could not find where transcripts are linked \
+             to episodes (neither ZMTMEDIAENCLOSURE.ZTRANSCRIPTIDENTIFIER nor \
+             ZMTEPISODE.ZTRANSCRIPTIDENTIFIER exists). Apple probably changed the schema."
+            .to_string())
+    }
+}
 
-    conn.query_row(query, [transcript_identifier], |row| {
+/// `Ok(None)` means the transcript has no library entry (e.g. the episode was
+/// removed but its cached transcript is still there). A real SQL error is
+/// returned instead of being mistaken for "unknown episode".
+fn query_episode_metadata(
+    conn: &Connection,
+    sql: &str,
+    transcript_identifier: &str,
+) -> Result<Option<HashMap<String, serde_json::Value>>, String> {
+    let result = conn.query_row(sql, [transcript_identifier], |row| {
         let mut map = HashMap::new();
         
         if let Ok(title) = row.get::<_, String>(0) {
@@ -206,8 +248,13 @@ fn query_episode_metadata(
         }
 
         Ok(map)
-    })
-    .ok()
+    });
+
+    match result {
+        Ok(map) => Ok(Some(map)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Episode metadata lookup failed: {}", e)),
+    }
 }
 
 pub fn search_episodes_content(query: String, episodes: Vec<Episode>) -> Vec<usize> {
@@ -863,5 +910,93 @@ mod tests {
     fn parse_ttml_rejects_mismatched_tags() {
         let xml = r#"<tt><body><div><p begin="1">a</span></div></body></tt>"#;
         assert!(parse_ttml(xml).is_err());
+    }
+
+    fn write_ttml(base: &Path, id: &str) {
+        let file = get_ttml_dir(base).join(id);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, r#"<tt><body><div><p begin="1.0">hi</p></div></body></tt>"#).unwrap();
+    }
+
+    /// WAL-mode database built from `sql`, plus the TTML file for TRANSCRIPT_ID.
+    fn fixture_with_sql(t: &TempDir, sql: &str) -> PathBuf {
+        let base = t.path().to_path_buf();
+        write_ttml(&base, TRANSCRIPT_ID);
+        fs::create_dir_all(base.join("Documents")).unwrap();
+        let conn = Connection::open(get_database_path(&base)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        conn.execute_batch(sql).unwrap();
+        base
+    }
+
+    /// Layout written by current Podcasts versions: the transcript identifier is
+    /// in ZMTMEDIAENCLOSURE (linked through ZEPISODE), not in ZMTEPISODE. The row
+    /// numbers are chosen so that joining on the wrong key (enclosure Z_PK =
+    /// episode Z_PK) would return the decoy episode instead of the right one.
+    const CURRENT_SCHEMA_SQL: &str = r#"
+        CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZAUTHOR VARCHAR, ZCATEGORY VARCHAR, ZSTORECOLLECTIONID INTEGER);
+        CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZPODCASTUUID VARCHAR, ZPUBDATE FLOAT, ZIMPORTDATE FLOAT, ZSTORETRACKID INTEGER,
+            ZCURRENTMEDIAENCLOSURE INTEGER);
+        CREATE TABLE ZMTMEDIAENCLOSURE (Z_PK INTEGER PRIMARY KEY, ZEPISODE INTEGER,
+            ZTRANSCRIPTIDENTIFIER VARCHAR);
+        INSERT INTO ZMTPODCAST (ZUUID, ZTITLE, ZAUTHOR, ZCATEGORY, ZSTORECOLLECTIONID)
+            VALUES ('P1', 'Dan''s Show', 'Dan', 'Comedy', 123);
+        INSERT INTO ZMTEPISODE (Z_PK, ZUUID, ZTITLE, ZPODCASTUUID, ZPUBDATE, ZIMPORTDATE,
+            ZSTORETRACKID, ZCURRENTMEDIAENCLOSURE) VALUES
+            (1, 'E0', 'Decoy episode', 'P1', 1.0, 1.0, 111, 2),
+            (2, 'E1', 'Say "hi" <b>', 'P1', 700000000.0, 700000001.0, 456, 1);
+        INSERT INTO ZMTMEDIAENCLOSURE (Z_PK, ZEPISODE, ZTRANSCRIPTIDENTIFIER) VALUES
+            (1, 2, 'PodcastContent1/v4/aa/bb/cc/x/transcript_1.ttml'),
+            (2, 1, 'PodcastContent9/v4/zz/zz/zz/x/transcript_9.ttml');
+    "#;
+
+    /// A schema where the transcript identifier can't be found anywhere.
+    const UNSUPPORTED_SCHEMA_SQL: &str = r#"
+        CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR);
+        CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZPODCASTUUID VARCHAR);
+    "#;
+
+    #[test]
+    fn scan_finds_metadata_in_the_current_apple_schema() {
+        let t = TempDir::new("current");
+        let base = fixture_with_sql(&t, CURRENT_SCHEMA_SQL);
+
+        let episodes = scan_ttml_files(&base).unwrap();
+
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].transcript_identifier, TRANSCRIPT_ID);
+        assert_eq!(episodes[0].podcast_title.as_deref(), Some("Dan's Show"));
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert_eq!(episodes[0].store_id.as_deref(), Some("456"));
+    }
+
+    #[test]
+    fn transcript_without_a_library_entry_is_listed_without_metadata() {
+        let t = TempDir::new("orphan");
+        let base = fixture_with_sql(&t, CURRENT_SCHEMA_SQL);
+        write_ttml(&base, "PodcastContent2/v4/aa/bb/cc/y/transcript_2.ttml");
+
+        let mut episodes = scan_ttml_files(&base).unwrap();
+        episodes.sort_by(|a, b| a.transcript_identifier.cmp(&b.transcript_identifier));
+
+        assert_eq!(episodes.len(), 2);
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert!(episodes[1].episode_title.is_none() && episodes[1].podcast_title.is_none());
+    }
+
+    #[test]
+    fn unsupported_schema_is_an_error_not_unknown_episodes() {
+        let t = TempDir::new("unsupported");
+        let base = fixture_with_sql(&t, UNSUPPORTED_SCHEMA_SQL);
+
+        let err = scan_ttml_files(&base).unwrap_err();
+
+        assert!(err.contains("Unsupported Apple Podcasts database"), "{err}");
     }
 }
