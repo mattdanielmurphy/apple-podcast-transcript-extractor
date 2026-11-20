@@ -1,6 +1,6 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
@@ -61,6 +61,17 @@ pub fn get_audio_path(base_dir: &Path, uuid: &str) -> Option<PathBuf> {
     None
 }
 
+/// Opens Apple's live Podcasts library read-only. We only ever SELECT from it,
+/// so a read-write handle would just risk touching (or checkpointing) a
+/// database that belongs to another app.
+fn open_podcasts_db(db_path: &Path) -> Result<Connection, String> {
+    Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("Failed to open database: {}", e))
+}
+
 pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
     let ttml_dir = get_ttml_dir(base_dir);
     
@@ -73,8 +84,7 @@ pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
         return Err(format!("Database not found: {:?}", db_path));
     }
 
-    let conn = Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+    let conn = open_podcasts_db(&db_path)?;
 
     let mut episodes = Vec::new();
     find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &mut episodes, base_dir)?;
@@ -664,5 +674,89 @@ mod tests {
     fn list_dir_names_errors_on_missing_dir() {
         let t = TempDir::new("missing");
         assert!(list_dir_names(&t.path().join("does-not-exist")).is_err());
+    }
+
+    const TRANSCRIPT_ID: &str = "PodcastContent1/v4/aa/bb/cc/x/transcript_1.ttml";
+
+    /// Minimal stand-in for Apple's MTLibrary.sqlite (WAL mode, like the real
+    /// one) plus one TTML file for the scanner to find. Returns the base dir.
+    fn podcasts_fixture(t: &TempDir) -> PathBuf {
+        let base = t.path().to_path_buf();
+        let ttml_dir = get_ttml_dir(&base).join("PodcastContent1/v4/aa/bb/cc/x");
+        fs::create_dir_all(&ttml_dir).unwrap();
+        fs::write(
+            ttml_dir.join("transcript_1.ttml"),
+            r#"<tt><body><div><p begin="1.0">hi</p></div></body></tt>"#,
+        )
+        .unwrap();
+        fs::create_dir_all(base.join("Documents")).unwrap();
+
+        let conn = Connection::open(get_database_path(&base)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        conn.execute_batch(&format!(
+            "CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+                 ZAUTHOR VARCHAR, ZCATEGORY VARCHAR, ZSTORECOLLECTIONID INTEGER);
+             CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+                 ZPODCASTUUID VARCHAR, ZTRANSCRIPTIDENTIFIER VARCHAR, ZPUBDATE FLOAT,
+                 ZIMPORTDATE FLOAT, ZSTORETRACKID INTEGER);
+             INSERT INTO ZMTPODCAST (ZUUID, ZTITLE, ZAUTHOR, ZCATEGORY, ZSTORECOLLECTIONID)
+                 VALUES ('P1', 'Dan''s Show', 'Dan', 'Comedy', 123);
+             INSERT INTO ZMTEPISODE (ZUUID, ZTITLE, ZPODCASTUUID, ZTRANSCRIPTIDENTIFIER,
+                 ZPUBDATE, ZIMPORTDATE, ZSTORETRACKID)
+                 VALUES ('E1', 'Say \"hi\" <b>', 'P1', '{}', 700000000.0, 700000001.0, 456);",
+            TRANSCRIPT_ID
+        ))
+        .unwrap();
+        base
+    }
+
+    #[test]
+    fn podcasts_db_is_opened_read_only() {
+        let t = TempDir::new("ro");
+        let base = podcasts_fixture(&t);
+
+        let conn = open_podcasts_db(&get_database_path(&base)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM ZMTEPISODE", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "reads must work on a WAL-mode database");
+        assert!(conn.execute("DELETE FROM ZMTEPISODE", []).is_err(), "writes must be refused");
+        assert!(conn.execute("CREATE TABLE evil (x)", []).is_err(), "schema changes must be refused");
+    }
+
+    #[test]
+    fn scan_finds_episode_with_metadata_and_does_not_modify_the_db() {
+        let t = TempDir::new("scan");
+        let base = podcasts_fixture(&t);
+        let db = get_database_path(&base);
+        let before = fs::read(&db).unwrap();
+
+        let episodes = scan_ttml_files(&base).unwrap();
+
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].transcript_identifier, TRANSCRIPT_ID);
+        assert_eq!(episodes[0].podcast_title.as_deref(), Some("Dan's Show"));
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert_eq!(fs::read(&db).unwrap(), before, "scanning must not modify the database file");
+    }
+
+    #[test]
+    fn reads_rows_still_in_the_wal_while_podcasts_has_the_db_open() {
+        let t = TempDir::new("wal");
+        let base = podcasts_fixture(&t);
+
+        // Stand-in for the running Podcasts app: a writer that keeps the WAL "hot"
+        // (committed rows not yet checkpointed into the main database file).
+        let writer = Connection::open(get_database_path(&base)).unwrap();
+        writer
+            .execute("UPDATE ZMTEPISODE SET ZTITLE = 'Fresh title'", [])
+            .unwrap();
+
+        let episodes = scan_ttml_files(&base).unwrap();
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Fresh title"));
+        drop(writer);
     }
 }
