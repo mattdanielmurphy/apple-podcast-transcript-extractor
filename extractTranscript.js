@@ -58,8 +58,8 @@ function queryEpisodeMetadata(db, transcriptIdentifier) {
 		const query = `
 			SELECT
 				e.ZTITLE as episode_title,
-				e.ZPUBDATE,
-				e.ZDURATION,
+				e.ZPUBDATE as pub_date,
+				e.ZITEMDESCRIPTIONWITHOUTHTML as description,
 				p.ZTITLE as podcast_title,
 				p.ZAUTHOR,
 				p.ZCATEGORY
@@ -79,7 +79,19 @@ function queryEpisodeMetadata(db, transcriptIdentifier) {
 	})
 }
 
-function extractTranscript(ttmlContent, outputPath, includeTimestamps = false) {
+function formatEpisodeDate(macTimestamp) {
+	if (macTimestamp == null || !Number.isFinite(Number(macTimestamp))) return "Unknown Date"
+
+	const date = new Date((Number(macTimestamp) + 978307200) * 1000)
+	if (!Number.isFinite(date.getTime())) return "Unknown Date"
+
+	const year = date.getFullYear()
+	const month = String(date.getMonth() + 1).padStart(2, "0")
+	const day = String(date.getDate()).padStart(2, "0")
+	return `${year}-${month}-${day}`
+}
+
+function extractTranscript(ttmlContent, outputPath, includeTimestamps = false, metadata = null) {
 	const parser = new xml2js.Parser()
 
 	parser.parseString(ttmlContent, (err, result) => {
@@ -117,7 +129,16 @@ function extractTranscript(ttmlContent, outputPath, includeTimestamps = false) {
 			}
 		})
 
-		const outputText = transcript.join("\n\n")
+		const outputText = [
+			`Podcast: ${metadata?.podcast_title || "Unknown Podcast"}`,
+			`Date: ${formatEpisodeDate(metadata?.pub_date)}`,
+			`Episode: ${metadata?.episode_title || "Unknown Episode"}`,
+			"",
+			"Description:",
+			metadata?.description || "",
+			"",
+			transcript.join("\n\n"),
+		].join("\n")
 		fs.writeFileSync(outputPath, outputText)
 		console.log(`Transcript saved to ${outputPath}`)
 	})
@@ -197,11 +218,12 @@ if (process.argv.length >= 4 && !includeTimestamps) {
 	// Process files sequentially to avoid overwhelming the database
 	async function processFiles() {
 		for (const file of ttmlFiles) {
+			let metadata = null
 			try {
 				console.log(`Processing: ${file.transcriptIdentifier}`)
 
 				// Query database for metadata
-				const metadata = await queryEpisodeMetadata(db, file.transcriptIdentifier)
+				metadata = await queryEpisodeMetadata(db, file.transcriptIdentifier)
 
 				let filename
 				if (metadata && metadata.podcast_title && metadata.episode_title) {
@@ -228,7 +250,7 @@ if (process.argv.length >= 4 && !includeTimestamps) {
 
 				const outputPath = path.join("./transcripts", filename)
 				const data = fs.readFileSync(file.path, "utf8")
-				extractTranscript(data, outputPath, includeTimestamps)
+				extractTranscript(data, outputPath, includeTimestamps, metadata)
 
 			} catch (error) {
 				console.error(`Error processing ${file.transcriptIdentifier}:`, error.message)
@@ -242,7 +264,7 @@ if (process.argv.length >= 4 && !includeTimestamps) {
 
 				try {
 					const data = fs.readFileSync(file.path, "utf8")
-					extractTranscript(data, outputPath, includeTimestamps)
+					extractTranscript(data, outputPath, includeTimestamps, metadata)
 				} catch (fallbackError) {
 					console.error(`Failed to process ${file.path}:`, fallbackError.message)
 				}
