@@ -405,9 +405,44 @@ pub fn get_transcript_paragraphs(episode: &Episode) -> Result<Vec<Paragraph>, St
     parse_ttml(&ttml_content)
 }
 
+/// One piece of a text node: raw text from the document (`true`) or the
+/// output of an entity/character reference (`false`).
+type TextPiece = (bool, String);
+
+/// Ends the current text node and appends it to the paragraph text followed by
+/// a single space. Like the old `trim_text(true)`, only XML whitespace
+/// (space, tab, CR, LF) is trimmed, only from the *raw* text at the two ends
+/// of the node; whitespace produced by a reference (e.g. `&#32;`) is kept.
+/// Nodes that end up empty are skipped.
+fn flush_text_node(node: &mut Vec<TextPiece>, paragraph_text: &mut String) {
+    const XML_WS: &[char] = &[' ', '\t', '\r', '\n'];
+    if let Some((true, first)) = node.first_mut() {
+        *first = first.trim_start_matches(XML_WS).to_string();
+    }
+    if let Some((true, last)) = node.last_mut() {
+        *last = last.trim_end_matches(XML_WS).to_string();
+    }
+    let text: String = node.drain(..).map(|(_, s)| s).collect();
+    if !text.is_empty() {
+        paragraph_text.push_str(&text);
+        paragraph_text.push(' ');
+    }
+}
+
+/// Appends the character an entity or character reference stands for.
+/// Unknown entities are skipped instead of discarding the surrounding text.
+fn push_entity(out: &mut String, reference: &quick_xml::events::BytesRef) {
+    if reference.is_char_ref() {
+        if let Ok(Some(c)) = reference.resolve_char_ref() {
+            out.push(c);
+        }
+    } else if let Some(s) = quick_xml::escape::resolve_predefined_entity(reference) {
+        out.push_str(s);
+    }
+}
+
 fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
 
     let mut paragraphs = Vec::new();
     let mut current_paragraph: Option<Paragraph> = None;
@@ -417,19 +452,43 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     let get_begin = |e: &quick_xml::events::BytesStart| {
         e.attributes()
             .filter_map(|a| a.ok())
-            .find(|attr| attr.key.local_name().as_ref() == b"begin")
-            .and_then(|attr| {
-                String::from_utf8(attr.value.to_vec())
-                    .ok()
-                    .and_then(|s| parse_ttml_time(s.trim()))
-            })
+            .find(|attr| attr.key.local_name().as_ref() == "begin")
+            .and_then(|attr| parse_ttml_time(attr.value.trim()))
     };
 
+    let mut node: Vec<TextPiece> = Vec::new();
+
     loop {
-        match reader.read_event() {
+        let event = reader.read_event();
+
+        // quick-xml reports entity references (&amp;, &#39;, ...) as separate
+        // events, so one text node can arrive in several pieces. Collect the
+        // whole node here and finish it when the next tag/comment/end shows
+        // up, which reproduces what a single text event used to give us.
+        match &event {
+            Ok(Event::Text(t)) => {
+                if in_paragraph {
+                    let raw: &str = t;
+                    node.push((true, raw.to_string()));
+                }
+                continue;
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if in_paragraph {
+                    let mut resolved = String::new();
+                    push_entity(&mut resolved, r);
+                    node.push((false, resolved));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        flush_text_node(&mut node, &mut current_text);
+
+        match event {
             Ok(Event::Start(e)) => {
                 match e.local_name().as_ref() {
-                    b"p" => {
+                    "p" => {
                         in_paragraph = true;
                         current_paragraph = Some(Paragraph {
                             begin: get_begin(&e),
@@ -437,7 +496,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                         });
                         current_text.clear();
                     }
-                    b"span" => {
+                    "span" => {
                         if in_paragraph {
                             if let Some(ref mut para) = current_paragraph {
                                 if para.begin.is_none() {
@@ -450,23 +509,15 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                 }
             }
             Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == b"p" {
+                if e.local_name().as_ref() == "p" {
                     paragraphs.push(Paragraph {
                         begin: get_begin(&e),
                         text: String::new(),
                     });
                 }
             }
-            Ok(Event::Text(e)) => {
-                if in_paragraph {
-                    if let Ok(text) = e.unescape() {
-                        current_text.push_str(&text);
-                        current_text.push(' ');
-                    }
-                }
-            }
             Ok(Event::End(e)) => {
-                if e.local_name().as_ref() == b"p" {
+                if e.local_name().as_ref() == "p" {
                     in_paragraph = false;
                     if let Some(mut para) = current_paragraph.take() {
                         para.text = current_text.trim().to_string();
@@ -758,5 +809,59 @@ mod tests {
         let episodes = scan_ttml_files(&base).unwrap();
         assert_eq!(episodes[0].episode_title.as_deref(), Some("Fresh title"));
         drop(writer);
+    }
+
+    #[test]
+    fn parse_ttml_reads_paragraph_text_and_start_times() {
+        let xml = r#"<?xml version="1.0"?>
+<tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+  <p begin="1.5" end="4"><span>Hello</span> <span>world</span></p>
+  <p begin="00:01:02.5"><span begin="62.5">Second</span></p>
+</div></body></tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(paragraphs[0].text, "Hello world");
+        assert_eq!(paragraphs[0].begin, Some(1.5));
+        assert_eq!(paragraphs[1].text, "Second");
+        assert_eq!(paragraphs[1].begin, Some(62.5));
+    }
+
+    #[test]
+    fn parse_ttml_handles_namespace_prefixes_and_entities() {
+        let xml = r#"<tt:tt xmlns:tt="http://www.w3.org/ns/ttml"><tt:body><tt:div>
+  <tt:p begin="10"><tt:span>Tom &amp; Jerry&#39;s &lt;show&gt;</tt:span></tt:p>
+</tt:div></tt:body></tt:tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        assert_eq!(paragraphs.len(), 1);
+        assert_eq!(paragraphs[0].text, "Tom & Jerry's <show>");
+        assert_eq!(paragraphs[0].begin, Some(10.0));
+    }
+
+    #[test]
+    fn parse_ttml_keeps_spacing_around_entities() {
+        let xml = r#"<tt><body><div>
+  <p begin="1">Tom &amp; Jerry</p>
+  <p begin="2">AT&amp;T &#x41;&#66;C</p>
+  <p begin="3"><span>one</span><span>two</span></p>
+</div></body></tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        // spaces around a reference survive
+        assert_eq!(paragraphs[0].text, "Tom & Jerry");
+        // no separator is invented inside one text node; hex and decimal char refs work
+        assert_eq!(paragraphs[1].text, "AT&T ABC");
+        // separate spans are still joined by exactly one space
+        assert_eq!(paragraphs[2].text, "one two");
+    }
+
+    #[test]
+    fn parse_ttml_rejects_mismatched_tags() {
+        let xml = r#"<tt><body><div><p begin="1">a</span></div></body></tt>"#;
+        assert!(parse_ttml(xml).is_err());
     }
 }
