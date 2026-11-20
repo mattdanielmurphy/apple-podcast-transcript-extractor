@@ -12,6 +12,38 @@ function formatTimestamp(seconds) {
 	return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
 }
 
+function parseTtmlTime(value) {
+	const time = value.trim()
+	if (!time) throw new Error(`Invalid TTML timestamp: ${value}`)
+
+	const seconds = Number(time)
+	if (Number.isFinite(seconds)) return seconds
+
+	if (time.includes(":")) {
+		const parts = time.split(":").map((part) => part.trim())
+		if (parts.some((part) => !part || !Number.isFinite(Number(part)))) {
+			throw new Error(`Invalid TTML timestamp: ${value}`)
+		}
+		const values = parts.map(Number)
+		if (values.length === 3) return values[0] * 3600 + values[1] * 60 + values[2]
+		if (values.length === 2) return values[0] * 60 + values[1]
+		throw new Error(`Invalid TTML timestamp: ${value}`)
+	}
+
+	const offset = time.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/)
+	if (offset) {
+		const amount = Number(offset[1])
+		switch (offset[2]) {
+			case "ms": return amount / 1000
+			case "s": return amount
+			case "m": return amount * 60
+			case "h": return amount * 3600
+		}
+	}
+
+	throw new Error(`Invalid TTML timestamp: ${value}`)
+}
+
 function sanitizeFilename(filename) {
 	// Replace invalid filesystem characters and limit length
 	return filename
@@ -76,7 +108,7 @@ function extractTranscript(ttmlContent, outputPath, includeTimestamps = false) {
 				const paragraphText = extractTextFromSpans(paragraph.span).trim()
 				if (paragraphText) {
 					if (includeTimestamps && paragraph.$ && paragraph.$.begin) {
-						const timestamp = formatTimestamp(parseFloat(paragraph.$.begin))
+						const timestamp = formatTimestamp(parseTtmlTime(paragraph.$.begin))
 						transcript.push(`[${timestamp}] ${paragraphText}`)
 					} else {
 						transcript.push(paragraphText)
