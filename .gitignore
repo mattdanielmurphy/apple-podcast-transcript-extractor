@@ -26,3 +26,4 @@ transcript.txt
 pbcopy
 
 venv/
+tmp/

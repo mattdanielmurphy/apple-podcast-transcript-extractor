@@ -1,0 +1,38 @@
+name: Checks
+
+# Releases are built, signed and notarized locally with `bun run release`
+# (Developer ID signing needs the maintainer's keychain), so CI only checks
+# that pull requests build and pass the tests.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check the CLI and frontend parse
+        run: |
+          node --check extractTranscript.js
+          node --check src/main.js
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

@@ -49,15 +49,7 @@ fn delete_transcript_bundle(
     let podcasts_path = Path::new(&podcasts_base_dir);
     
     // 1. Delete the .txt transcript
-    let transcript_filename = if episode.podcast_title.is_some() && episode.episode_title.is_some() {
-        transcript::sanitize_filename(&format!(
-            "{} - {}",
-            episode.podcast_title.as_ref().unwrap(),
-            episode.episode_title.as_ref().unwrap()
-        )) + ".txt"
-    } else {
-        episode.transcript_identifier.replace("/", "_") + ".txt"
-    };
+    let transcript_filename = transcript::resolve_base_name(&episode, output_path) + ".txt";
     
     let transcript_path = output_path.join(&transcript_filename);
     if transcript_path.exists() {

@@ -38,15 +38,12 @@
     - Improved progress feedback with immediate bar hiding upon completion.
     - **Selection & Edit Menus**: Restored "Select All" (`Cmd+A`) to the Edit menu and added a native "Selection" menu with "Select All" and "Select None" (`Esc`) actions. Cmd+A is now context-aware: it selects all text if a text field is focused, and selects all episodes in the current list otherwise.
     - **Contextual Actions**: Selection bar now contextually hides transcript-related actions when viewing unextracted episodes.
-- **Build**:
-  - `npm install` – install Node dependencies.
-  - `npm run dev` – start the app in development mode.
-  - `npm run build` – produce a signed `.app` bundle.
-  - `npm run watch-build` – watch for changes and rebuild automatically.
-  - `npm run test:reset-permissions` – reset macOS TCC permissions (useful for testing permission prompts).
-  - `npm run test:clean-data` – clear the application support data directory.
-  - `npm run test:open-app` – open the built release application bundle.
-  - `cargo tauri dev` – run the app locally.
-  - `cargo tauri build` – produce a signed `.app` bundle (requires a paid Apple Developer account for distribution).
-- **Release**: GitHub Actions workflow (`.github/workflows/release.yml`) builds and uploads the `.app` artifact.
+- **Database layouts**: old (`ZMTEPISODE.ZTRANSCRIPTIDENTIFIER`) and new (macOS 27: `ZMTMEDIAENCLOSURE.ZTRANSCRIPTIDENTIFIER`, joined via `ZEPISODE` → `ZMTEPISODE.Z_PK`). Both the CLI (`buildMetadataQuery`) and Rust (`metadata_query`) check columns with PRAGMA and pick one. The DB is opened read-only.
+- **Output**: `<podcast> - YYYY-MM-DD - <episode>.txt` with a Podcast/Date/Episode/Description header. `resolve_base_name` keeps a pre-0.2 undated file name if only that file exists (mirrored by `getExpectedFilename` in main.js). The app auto-scans on launch once the Podcasts folder is saved.
+- **Build** (bun only, never npm):
+  - `bun install`, `bun run dev`, `bun run build`.
+  - `bun run test` – Rust unit tests. `FIXTURE_PODCASTS_DIR=<copied 243LU875E5… folder> cargo test -- --ignored --nocapture` runs scan + extract end to end.
+  - `bun run release` – universal build, signed with the keychain's "Developer ID Application" cert, notarized, stapled, checked with spctl, zipped, attached to a DRAFT GitHub release (notes from `RELEASE_NOTES.md`). Needs `APPLE_ID`, `APPLE_PASSWORD` (app-specific) and `APPLE_TEAM_ID` in `.env`.
+  - `bun run test:reset-permissions`, `bun run test:open-app`.
+- **CI**: `.github/workflows/checks.yml` runs a syntax check and cargo test on PRs and main. Releases are made locally with `bun run release`, never by CI (signing needs the keychain cert).
 - **Future**: Keep CLI unchanged for scriptable usage; GUI provides a user‑friendly interface for non‑technical users.

@@ -23,6 +23,9 @@ pub struct Episode {
     pub podcast_store_id: Option<String>,
     pub has_audio: bool,
     pub is_orphaned: bool,
+    /// Plain-text episode description. Older saved metadata files don't have it.
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,14 +77,21 @@ fn open_podcasts_db(db_path: &Path) -> Result<Connection, String> {
 
 pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
     let ttml_dir = get_ttml_dir(base_dir);
-    
-    if !ttml_dir.exists() {
-        return Err(format!("TTML directory not found: {:?}", ttml_dir));
-    }
 
     let db_path = get_database_path(base_dir);
     if !db_path.exists() {
-        return Err(format!("Database not found: {:?}", db_path));
+        return Err(format!(
+            "Apple Podcasts library not found in {:?}. Choose the folder named \
+             243LU875E5.groups.com.apple.podcasts, and open the Podcasts app at least once.",
+            base_dir
+        ));
+    }
+
+    // Podcasts creates the TTML folder the first time it downloads a transcript
+    // (when you play an episode or open its transcript). No folder yet simply
+    // means no transcripts yet: the UI explains what to do.
+    if !ttml_dir.exists() {
+        return Ok(Vec::new());
     }
 
     let conn = open_podcasts_db(&db_path)?;
@@ -138,13 +148,15 @@ fn find_ttml_files_recursive(
                 podcast_title: metadata.as_ref().and_then(|m| m.get("podcast_title").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
                 author: metadata.as_ref().and_then(|m| m.get("author").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
                 category: metadata.as_ref().and_then(|m| m.get("category").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                                    pub_date: metadata.as_ref().and_then(|m| m.get("pub_date").cloned().and_then(|v| v.as_f64())),
-                                    import_date: metadata.as_ref().and_then(|m| m.get("import_date").cloned().and_then(|v| v.as_f64())),
-                                    store_id: metadata.as_ref().and_then(|m| m.get("store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                                    podcast_store_id: metadata.as_ref().and_then(|m| m.get("podcast_store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
-                                    has_audio,
-                                    is_orphaned: false,
-                                });        }
+                pub_date: metadata.as_ref().and_then(|m| m.get("pub_date").cloned().and_then(|v| v.as_f64())),
+                import_date: metadata.as_ref().and_then(|m| m.get("import_date").cloned().and_then(|v| v.as_f64())),
+                store_id: metadata.as_ref().and_then(|m| m.get("store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                podcast_store_id: metadata.as_ref().and_then(|m| m.get("podcast_store_id").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+                has_audio,
+                is_orphaned: false,
+                description: metadata.as_ref().and_then(|m| m.get("description").cloned().and_then(|v| v.as_str().map(|s| s.to_string()))),
+            });
+        }
     }
 
     Ok(())
@@ -161,7 +173,16 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
     names.map(|cols| cols.iter().any(|c| c == column)).unwrap_or(false)
 }
 
-const METADATA_COLUMNS: &str = "
+/// The SELECT list shared by both layouts. The plain-text description column
+/// is optional so an unexpected schema can't break the whole scan.
+fn metadata_columns(conn: &Connection) -> String {
+    let description = if table_has_column(conn, "ZMTEPISODE", "ZITEMDESCRIPTIONWITHOUTHTML") {
+        "e.ZITEMDESCRIPTIONWITHOUTHTML"
+    } else {
+        "NULL"
+    };
+    format!(
+        "
         SELECT
             e.ZTITLE as episode_title,
             p.ZTITLE as podcast_title,
@@ -171,17 +192,21 @@ const METADATA_COLUMNS: &str = "
             e.ZIMPORTDATE as import_date,
             e.ZUUID as uuid,
             e.ZSTORETRACKID as store_id,
-            p.ZSTORECOLLECTIONID as podcast_store_id";
+            p.ZSTORECOLLECTIONID as podcast_store_id,
+            {description} as description"
+    )
+}
 
 /// Picks the metadata query that matches this database. Newer Podcasts
 /// versions keep the transcript identifier in ZMTMEDIAENCLOSURE (linked to the
 /// episode through ZEPISODE); older ones had it as a column of ZMTEPISODE.
 fn metadata_query(conn: &Connection) -> Result<String, String> {
+    let columns = metadata_columns(conn);
     if table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZTRANSCRIPTIDENTIFIER")
         && table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZEPISODE")
     {
         Ok(format!(
-            "{METADATA_COLUMNS}
+            "{columns}
         FROM ZMTMEDIAENCLOSURE m
         JOIN ZMTEPISODE e ON e.Z_PK = m.ZEPISODE
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
@@ -189,7 +214,7 @@ fn metadata_query(conn: &Connection) -> Result<String, String> {
         ))
     } else if table_has_column(conn, "ZMTEPISODE", "ZTRANSCRIPTIDENTIFIER") {
         Ok(format!(
-            "{METADATA_COLUMNS}
+            "{columns}
         FROM ZMTEPISODE e
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
         WHERE e.ZTRANSCRIPTIDENTIFIER = ?1"
@@ -244,6 +269,13 @@ fn query_episode_metadata(
         if let Ok(podcast_store_id) = row.get::<_, i64>(8) {
             if podcast_store_id != 0 {
                 map.insert("podcast_store_id".to_string(), serde_json::Value::String(podcast_store_id.to_string()));
+            }
+        }
+
+        if let Ok(Some(description)) = row.get::<_, Option<String>>(9) {
+            let description = description.trim();
+            if !description.is_empty() {
+                map.insert("description".to_string(), serde_json::Value::String(description.to_string()));
             }
         }
 
@@ -333,17 +365,14 @@ pub fn extract_transcript(
             .join("\n\n")
     };
 
+    let transcript_text = format!("{}{}", metadata_header(episode), transcript_text);
+
     // Create output directory if it doesn't exist
     fs::create_dir_all(output_dir)
         .map_err(|e| format!("Failed to create output directory: {}", e))?;
 
     // Generate filenames
-    let base_name = if let (Some(podcast), Some(episode_title)) = 
-        (&episode.podcast_title, &episode.episode_title) {
-        sanitize_filename(&format!("{} - {}", podcast, episode_title))
-    } else {
-        episode.transcript_identifier.replace("/", "_")
-    };
+    let base_name = resolve_base_name(episode, Path::new(output_dir));
 
     let filename = format!("{}.txt", base_name);
     let metadata_filename = format!("{}.json", base_name);
@@ -652,6 +681,79 @@ pub fn sanitize_filename(filename: &str) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+/// Local calendar date (YYYY-MM-DD) for an Apple "Mac absolute time" value
+/// (seconds since 2001-01-01 UTC). Uses the Mac's time zone, like the UI does.
+pub fn format_episode_date(mac_time: f64) -> Option<String> {
+    if !mac_time.is_finite() {
+        return None;
+    }
+    let unix = (mac_time + 978_307_200.0).floor() as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    let ok = unsafe { !libc::localtime_r(&unix, &mut tm).is_null() };
+    if !ok {
+        return None;
+    }
+    Some(format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday))
+}
+
+/// The header written above every transcript whose episode is known.
+pub fn metadata_header(episode: &Episode) -> String {
+    let (Some(podcast), Some(title)) = (&episode.podcast_title, &episode.episode_title) else {
+        return String::new();
+    };
+    let date = episode
+        .pub_date
+        .and_then(format_episode_date)
+        .unwrap_or_else(|| "Unknown Date".to_string());
+    let mut header = format!("Podcast: {}\nDate: {}\nEpisode: {}\n", podcast, date, title);
+    if let Some(description) = episode.description.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+        header.push_str("\nDescription:\n");
+        header.push_str(description);
+        header.push('\n');
+    }
+    header.push('\n');
+    header
+}
+
+/// File name (without extension) for an episode's transcript:
+/// "<podcast> - <YYYY-MM-DD> - <episode>", so a show's files sort by date.
+/// Keep in sync with `getExpectedFilename` in src/main.js.
+pub fn transcript_base_name(episode: &Episode) -> String {
+    match (&episode.podcast_title, &episode.episode_title) {
+        (Some(podcast), Some(title)) => {
+            match episode.pub_date.and_then(format_episode_date) {
+                Some(date) => sanitize_filename(&format!("{} - {} - {}", podcast, date, title)),
+                None => sanitize_filename(&format!("{} - {}", podcast, title)),
+            }
+        }
+        _ => episode.transcript_identifier.replace("/", "_"),
+    }
+}
+
+/// The name used before dates were added (v0.1.x): "<podcast> - <episode>".
+pub fn legacy_transcript_base_name(episode: &Episode) -> String {
+    match (&episode.podcast_title, &episode.episode_title) {
+        (Some(podcast), Some(title)) => sanitize_filename(&format!("{} - {}", podcast, title)),
+        _ => episode.transcript_identifier.replace("/", "_"),
+    }
+}
+
+/// The name to use in `output_dir`: an episode extracted by an older version
+/// keeps its old file name, so re-extracting or deleting it never leaves a
+/// duplicate behind.
+pub fn resolve_base_name(episode: &Episode, output_dir: &Path) -> String {
+    let current = transcript_base_name(episode);
+    let legacy = legacy_transcript_base_name(episode);
+    if current != legacy
+        && !output_dir.join(format!("{}.txt", current)).exists()
+        && output_dir.join(format!("{}.txt", legacy)).exists()
+    {
+        legacy
+    } else {
+        current
+    }
 }
 
 pub fn is_within_dir(path: &Path, base_dir: &Path) -> bool {
@@ -998,5 +1100,107 @@ mod tests {
         let err = scan_ttml_files(&base).unwrap_err();
 
         assert!(err.contains("Unsupported Apple Podcasts database"), "{err}");
+    }
+
+    fn sample_episode() -> Episode {
+        Episode {
+            transcript_identifier: "PodcastContent1/v4/x/transcript_1.ttml".into(),
+            file_path: String::new(),
+            local_ttml_path: None,
+            uuid: None,
+            episode_title: Some("Who's \"next\"?".into()),
+            podcast_title: Some("Dan's Show".into()),
+            author: None,
+            category: None,
+            // 2026-06-15 12:00 UTC: midday, so the local date is the same in every time zone
+            pub_date: Some(803_217_600.0),
+            import_date: None,
+            store_id: None,
+            podcast_store_id: None,
+            has_audio: false,
+            is_orphaned: false,
+            description: Some("  About the show.  ".into()),
+        }
+    }
+
+    #[test]
+    fn file_name_has_the_episode_date_between_show_and_title() {
+        let ep = sample_episode();
+        assert_eq!(transcript_base_name(&ep), "Dan's Show - 2026-06-15 - Who's -next--");
+        assert_eq!(legacy_transcript_base_name(&ep), "Dan's Show - Who's -next--");
+
+        let mut undated = ep.clone();
+        undated.pub_date = None;
+        assert_eq!(transcript_base_name(&undated), "Dan's Show - Who's -next--");
+
+        let mut unknown = ep.clone();
+        unknown.podcast_title = None;
+        assert_eq!(transcript_base_name(&unknown), "PodcastContent1_v4_x_transcript_1.ttml");
+    }
+
+    #[test]
+    fn already_extracted_files_keep_their_old_name() {
+        let t = TempDir::new("names");
+        let ep = sample_episode();
+        assert_eq!(resolve_base_name(&ep, t.path()), transcript_base_name(&ep));
+
+        fs::write(t.path().join(format!("{}.txt", legacy_transcript_base_name(&ep))), "old").unwrap();
+        assert_eq!(resolve_base_name(&ep, t.path()), legacy_transcript_base_name(&ep));
+
+        fs::write(t.path().join(format!("{}.txt", transcript_base_name(&ep))), "new").unwrap();
+        assert_eq!(resolve_base_name(&ep, t.path()), transcript_base_name(&ep));
+    }
+
+    #[test]
+    fn header_lists_show_date_episode_and_description() {
+        let ep = sample_episode();
+        assert_eq!(
+            metadata_header(&ep),
+            "Podcast: Dan's Show\nDate: 2026-06-15\nEpisode: Who's \"next\"?\n\nDescription:\nAbout the show.\n\n"
+        );
+        let mut no_desc = ep.clone();
+        no_desc.description = None;
+        assert_eq!(
+            metadata_header(&no_desc),
+            "Podcast: Dan's Show\nDate: 2026-06-15\nEpisode: Who's \"next\"?\n\n"
+        );
+        let mut unknown = ep;
+        unknown.episode_title = None;
+        assert_eq!(metadata_header(&unknown), "");
+    }
+
+    #[test]
+    fn extraction_writes_header_and_dated_file_name() {
+        let t = TempDir::new("extract");
+        let ttml = t.path().join("in.ttml");
+        fs::write(
+            &ttml,
+            r#"<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="1:02.5"><span>Hello</span> <span>there</span></p></div><div><p begin="3723.0"><span>Bye &amp; thanks</span></p></div></body></tt>"#,
+        )
+        .unwrap();
+        let mut ep = sample_episode();
+        ep.file_path = ttml.to_string_lossy().to_string();
+        let out = t.path().join("out");
+        let (path, name) = extract_transcript(&ep, out.to_str().unwrap(), true).unwrap();
+        assert_eq!(name, "Dan's Show - 2026-06-15 - Who's -next--.txt");
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.starts_with("Podcast: Dan's Show\nDate: 2026-06-15\n"), "{text}");
+        assert!(text.ends_with("[00:01:02] Hello there\n\n[01:02:03] Bye & thanks"), "{text}");
+    }
+
+    /// Runs the whole scan + extract pipeline against a copied Podcasts
+    /// folder: `FIXTURE_PODCASTS_DIR=<dir> cargo test -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn end_to_end_against_fixture_library() {
+        let Ok(dir) = std::env::var("FIXTURE_PODCASTS_DIR") else { return };
+        let episodes = scan_ttml_files(Path::new(&dir)).expect("scan");
+        assert!(!episodes.is_empty(), "no episodes found in {dir}");
+        let out = TempDir::new("e2e");
+        for ep in &episodes {
+            let (path, name) = extract_transcript(ep, out.path().to_str().unwrap(), true).expect("extract");
+            let text = fs::read_to_string(path).unwrap();
+            println!("=== {name}\n{}\n", text.chars().take(400).collect::<String>());
+        }
     }
 }

@@ -6,9 +6,10 @@
 
 This tool extracts transcripts from the Podcasts app on macOS.
 
-### Important Notes
-- In order to extract a podcast transcript, you must **download** the podcast episode in the Apple Podcasts app.
-- Apple does not generate transcripts for podcasts in private feeds (ie a premium podcast feed with no ads), and so obviously this app cannot extract a transcript from them.
+### Before you start
+- Apple Podcasts only saves a transcript **after you open it**. Download the episode, then play it or tap the transcript (speech-bubble) button once. After that the transcript shows up here.
+- Apple does not make transcripts for private feeds (for example a paid, ad-free feed), so those can't be extracted.
+- Works with both the older and the newer Podcasts database layouts (the newer one seen on macOS 27).
 
 ## 🚀 Recommended: macOS Application
 
@@ -21,18 +22,21 @@ This tool extracts transcripts from the Podcasts app on macOS.
 
 1.  [Download the latest version of `Transcript-Extractor.zip`](https://github.com/mattdanielmurphy/apple-podcast-transcript-extractor/releases/latest).
 2.  Unzip and drag `Transcript Extractor.app` to your `/Applications` folder.
-3.  **Note for macOS Users**: I currently do not have a paid Apple developer account. As a result, macOS will treat the app as unsafe or "damaged" because it is not notarized. In order to open it, you must run the following command in Terminal **after dragging the app to your Applications folder**:
+3.  Open it. From version 0.2.0 the app is signed and notarized by Apple, so it opens like any other app.
+
+    Using an older version (0.1.x) and macOS says it is "damaged"? Run this once in Terminal:
     ```bash
     xattr -cr /Applications/Transcript\ Extractor.app
     ```
-    I should have a paid developer account soon so that this won't be an issue.
 
 ## Features
 - **Native macOS Interface**: A polished, easy-to-use GUI.
 - **Enhanced Browsing**: Easily search and filter through your downloaded podcast transcripts.
 - **Delete Podcast Audio**: Clean up your disk if you would rather not have the audio downloaded.
 - **One-Click Export**: Quickly save transcripts to your preferred location.
-- **No Setup Required**: Just download and run—no need to install Node.js or run scripts.
+- **Readable files**: Each transcript starts with the podcast, date, episode and description, and is named `<podcast> - YYYY-MM-DD - <episode>.txt`.
+- **Optional timestamps**: Add `[HH:MM:SS]` before every paragraph.
+- **No Setup Required**: Just download and run—no need to install anything or run scripts.
 
 ### Download
 👉 **[Download the latest version of Transcript Extractor](https://github.com/mattdanielmurphy/apple-podcast-transcript-extractor/releases/latest)**
@@ -46,39 +50,36 @@ For developers or those who prefer the terminal, a command-line script is also a
 ## Installation
 
 1. Clone the repository
-2. Install dependencies: `npm install`
+2. Install dependencies with [Bun](https://bun.sh): `bun install` (Node.js 18+ runs the script)
 
 ## Usage
 
 ### Batch Mode
 To process all TTML files in your Apple Podcasts cache:
 ```bash
-node extractTranscript.js [--timestamps]
+node extractTranscript.js [--timestamps] [--podcasts-dir <path>]
 ```
+
+`--podcasts-dir` points at a copy of the `243LU875E5.groups.com.apple.podcasts` folder (useful for backups or another Mac's library).
 
 This will:
 1. Find all TTML files in `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Library/Cache/Assets/TTML`
 2. Create a `./transcripts` directory
 3. Save each transcript as `./transcripts/<podcast_name> - YYYY-MM-DD - <episode_title>.txt`
 
-Note the podcast name, episode date and title are extracted from the SQLite database at `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Documents/MTLibrary.sqlite`.
+Episodes without a known date leave the date out. Note the podcast name, episode date and title are extracted from the SQLite database at `~/Library/Group Containers/243LU875E5.groups.com.apple.podcasts/Documents/MTLibrary.sqlite`.
 
 **Duplicate handling**: If multiple episodes have the same podcast name, date and episode title, the script will add a suffix like `(1)`, `(2)`, etc. to avoid overwriting files.
 
 Sample output is:
 ```
 $ ls ./transcripts
-Secret Leaders - Hermann Hauser- The Man Who Saved Apple from Bankruptcy.txt
-Secret Leaders - How to Earn Millions by charging $0.txt
-Secret Leaders - I built a $2bn Company By Paying Everybody The Same As Me - Nicola Kilner.txt
-Secret Leaders - Spencer Matthews- How pushing my body to the limit changed my life.txt
-The BugBash Podcast - Ergonomics, reliability, durability.txt
-The BugBash Podcast - Every map is wrong, but we made one anyway.txt
-The BugBash Podcast - FoundationDB- From Idea to Apple Acquisition.txt
-The Intelligence from The Economist - Against the clock- Gaza peace talks.txt
-The Intelligence from The Economist - All the president’s money men- the Trumponomics team.txt
-The Intelligence from The Economist - Billions of voices heard- a year of elections.txt
+Secret Leaders - 2024-11-05 - How to Earn Millions by charging $0.txt
+The BugBash Podcast - 2025-02-13 - Ergonomics, reliability, durability.txt
+The Intelligence from The Economist - 2025-01-17 - All the president’s money men- the Trumponomics team.txt
 ```
+
+Transcripts saved by older versions (without the date) are left as they are.
 
 ### Timestamps Option
 Add `--timestamps` to include timestamps for each paragraph in the format `[HH:MM:SS]`.
@@ -117,13 +118,15 @@ The script uses the Apple Podcasts SQLite database to retrieve episode and podca
 
 ### Key Tables
 
+**Newer layout (seen on macOS 27):** the transcript ID moved to **`ZMTMEDIAENCLOSURE.ZTRANSCRIPTIDENTIFIER`**, linked to the episode by `ZMTMEDIAENCLOSURE.ZEPISODE = ZMTEPISODE.Z_PK`. The script and app check which layout your database has and use the right one.
+
 **`ZMTEPISODE`** (episodes):
   - `ZTITLE` - Episode title
-  - `ZITEMDESCRIPTION` - Episode description
+  - `ZITEMDESCRIPTION` - Episode description (HTML); `ZITEMDESCRIPTIONWITHOUTHTML` - plain text
   - `ZPUBDATE` - Publication date
   - `ZDURATION` - Episode duration
   - `ZPODCASTUUID` - Links to podcast
-  - `ZTRANSCRIPTIDENTIFIER` - Matches the TTML file path (e.g., `PodcastContent112/v4/aa/35/30/aa35304c-cf37-97f4-fe9f-08cc3aee2c86/transcript_1000415837465.ttml`)
+  - `ZTRANSCRIPTIDENTIFIER` - (older layout) matches the TTML file path (e.g., `PodcastContent112/v4/aa/35/30/aa35304c-cf37-97f4-fe9f-08cc3aee2c86/transcript_1000415837465.ttml`)
 
 **`ZMTPODCAST`** (podcasts/shows):
   - `ZTITLE` - Podcast title
@@ -143,6 +146,7 @@ sqlite3 ~/Library/Group\ Containers/243LU875E5.groups.com.apple.podcasts/Documen
 sqlite> SELECT ZTRANSCRIPTIDENTIFIER FROM ZMTEPISODE LIMIT 5;
 PodcastContent112/v4/aa/35/30/aa35304c-cf37-97f4-fe9f-08cc3aee2c86/transcript_1000415837465.ttml
 PodcastContent122/v4/f4/1a/aa/f41aaa81-24f0-b259-9870-9b1e48e676f6/transcript_1000427522064.ttml
+```
 
 **Getting episode metadata:**
 ```bash

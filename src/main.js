@@ -1,6 +1,7 @@
 // State
 let episodes = []
 let existingTranscripts = new Set()
+let hasScanned = false
 let selectedEpisodes = new Set()
 let activeTab = "new" // "new" or "existing"
 let searchQuery = ""
@@ -128,6 +129,10 @@ async function init() {
 	await loadSettings()
 
 	updateUI()
+
+	// Folder access was already granted on an earlier launch: show episodes
+	// straight away instead of waiting for a click on "Scan".
+	if (podcastsDataDir) scanForEpisodes()
 }
 
 // Settings management
@@ -889,6 +894,7 @@ async function scanForEpisodes() {
 		})
 
 		episodes = allEpisodes
+		hasScanned = true
 
 		// Default selection logic:
 		// 1. If there are unextracted episodes, select only those.
@@ -993,6 +999,18 @@ function renderEpisodes() {
 		const emptyMsg = searchQuery ? `No episodes found matching "${escapeHtml(searchQuery)}"` : "No episodes found"
 		html = `<div class="empty-state">
             <h3 class="empty-title">${emptyMsg}</h3>`
+
+		// Nothing at all after a scan: the usual cause is that Podcasts hasn't saved
+		// any transcript yet (it only does so once you open one).
+		if (!searchQuery && episodes.length === 0 && hasScanned) {
+			html += `
+                <p class="empty-description">
+                    Apple Podcasts saves a transcript only after you open it.<br>
+                    In Podcasts, download an episode, then play it or open its transcript
+                    (the speech-bubble button), and scan again.<br>
+                    Private or paid feeds don't have transcripts.
+                </p>`
+		}
 
 		if (activeTab === "new" && existingEpisodes.length > 0) {
 			const matchingExisting = getFilteredAndSortedEpisodes(existingEpisodes).length
@@ -1130,14 +1148,32 @@ function setActiveTab(tab) {
 	updateUI()
 }
 
+// Mirrors sanitize_filename in src-tauri/src/transcript.rs (200 characters, not UTF-16 units).
+function sanitizeFilename(name) {
+	return Array.from(name.replace(/[<>:"\/\\|?*]/g, "-")).slice(0, 200).join("")
+}
+
+// Local YYYY-MM-DD for a Mac absolute time, like format_episode_date in Rust.
+function isoDate(macTimestamp) {
+	if (macTimestamp == null || !Number.isFinite(Number(macTimestamp))) return null
+	const date = new Date((Math.floor(Number(macTimestamp)) + 978307200) * 1000)
+	if (!Number.isFinite(date.getTime())) return null
+	const pad = (n) => String(n).padStart(2, "0")
+	return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+// Mirrors resolve_base_name in Rust: "<podcast> - <YYYY-MM-DD> - <episode>.txt",
+// except that a transcript extracted by an older version keeps its old name.
 function getExpectedFilename(episode) {
-	if (episode.podcast_title && episode.episode_title) {
-		// Mock the logic from Rust - we can't perfectly replicate sanitize_filename here
-		// but we can try common patterns. The real solution is to check after extraction.
-		const base = `${episode.podcast_title} - ${episode.episode_title}`
-		return base.replace(/[<>\:"\/\\|?*]/g, "-").substring(0, 200) + ".txt"
+	if (!(episode.podcast_title && episode.episode_title)) {
+		return (episode.transcript_identifier || "").replace(/\//g, "_") + ".txt"
 	}
-	return (episode.transcript_identifier || "").replace(/\//g, "_") + ".txt"
+	const legacy = sanitizeFilename(`${episode.podcast_title} - ${episode.episode_title}`) + ".txt"
+	const date = isoDate(episode.pub_date)
+	if (!date) return legacy
+	const current = sanitizeFilename(`${episode.podcast_title} - ${date} - ${episode.episode_title}`) + ".txt"
+	if (!existingTranscripts.has(current) && existingTranscripts.has(legacy)) return legacy
+	return current
 }
 
 function renderEpisodeItem(episode, index, isExisting = false, isCompact = false) {
@@ -1367,7 +1403,6 @@ async function viewTranscript(index) {
 					episode: episode,
 					outputDir: elements.outputDir.value,
 					includeTimestamps: includeTimestamps,
-					episodeDate: formatDate(episode.pub_date) || "Unknown Date",
 				})
 
 				transcriptTimestampState.set(episode.transcript_identifier, includeTimestamps)
@@ -1817,7 +1852,6 @@ async function extractTranscripts(includeTimestamps = true) {
 					episode: episode,
 					outputDir: elements.outputDir.value,
 					includeTimestamps: includeTimestamps,
-					episodeDate: formatDate(episode.pub_date) || "Unknown Date",
 				})
 
 				transcriptTimestampState.set(episode.transcript_identifier, includeTimestamps)
