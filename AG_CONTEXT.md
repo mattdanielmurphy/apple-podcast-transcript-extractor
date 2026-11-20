@@ -43,7 +43,7 @@
 - **Build** (bun only, never npm):
   - `bun install`, `bun run dev`, `bun run build`.
   - `bun run test` – Rust unit tests. `FIXTURE_PODCASTS_DIR=<copied 243LU875E5… folder> cargo test -- --ignored --nocapture` runs scan + extract end to end.
-  - `bun run release` – universal build, signed with the keychain's "Developer ID Application" cert, notarized, stapled, checked with spctl, zipped, attached to a DRAFT GitHub release (notes from `RELEASE_NOTES.md`). Needs `APPLE_ID`, `APPLE_PASSWORD` (app-specific) and `APPLE_TEAM_ID` in `.env`.
+  - `bun run release` – universal build, signed with the keychain's "Developer ID Application" cert, notarized, stapled, checked with spctl, zipped, attached to a DRAFT GitHub release (notes from `RELEASE_NOTES.md`). Needs a notary login in `.env`: an App Store Connect API key (`APPLE_API_ISSUER`, `APPLE_API_KEY`, `APPLE_API_KEY_PATH`, preferred) or `APPLE_ID` + `APPLE_PASSWORD` (app-specific) + `APPLE_TEAM_ID`.
   - `bun run test:reset-permissions`, `bun run test:open-app`.
 - **CI**: `.github/workflows/checks.yml` runs a syntax check and cargo test on PRs and main. Releases are made locally with `bun run release`, never by CI (signing needs the keychain cert).
 - **Future**: Keep CLI unchanged for scriptable usage; GUI provides a user‑friendly interface for non‑technical users.

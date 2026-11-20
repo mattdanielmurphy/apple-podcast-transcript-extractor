@@ -4,10 +4,15 @@
 //   bun run release            build, sign, notarize, zip, draft release
 //   bun run release --no-draft build, sign, notarize and zip only
 //
-// Needs (in .env or the environment):
-//   APPLE_ID        Apple ID email of the developer account
-//   APPLE_PASSWORD  app-specific password for that Apple ID (account.apple.com)
-//   APPLE_TEAM_ID   10-character team ID
+// Needs (in .env or the environment) ONE way to log in to Apple's notary service:
+//   App Store Connect API key (preferred, no password):
+//     APPLE_API_ISSUER    issuer ID (App Store Connect → Users and Access → Integrations)
+//     APPLE_API_KEY       key ID
+//     APPLE_API_KEY_PATH  path to the downloaded AuthKey_<id>.p8 file
+//   or Apple ID:
+//     APPLE_ID        Apple ID email of the developer account
+//     APPLE_PASSWORD  app-specific password for that Apple ID (account.apple.com)
+//     APPLE_TEAM_ID   10-character team ID
 //   APPLE_SIGNING_IDENTITY (optional) defaults to the first "Developer ID Application" identity in the keychain
 const { execSync, spawnSync } = require("child_process")
 const fs = require("fs")
@@ -30,8 +35,19 @@ if (fs.existsSync(envPath)) {
 	}
 }
 
-const missing = ["APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"].filter((k) => !process.env[k])
-if (missing.length) fail(`Missing ${missing.join(", ")} (add to .env). See the comment at the top of release.js.`)
+const has = (keys) => keys.every((k) => process.env[k])
+const apiKeyVars = ["APPLE_API_ISSUER", "APPLE_API_KEY", "APPLE_API_KEY_PATH"]
+const appleIdVars = ["APPLE_ID", "APPLE_PASSWORD", "APPLE_TEAM_ID"]
+if (has(apiKeyVars)) {
+	if (!fs.existsSync(process.env.APPLE_API_KEY_PATH)) fail("APPLE_API_KEY_PATH points to a file that does not exist.")
+	// Use only one login so Tauri doesn't mix them up.
+	for (const k of appleIdVars) delete process.env[k]
+	console.log("Notarizing with the App Store Connect API key.")
+} else if (has(appleIdVars)) {
+	console.log("Notarizing with the Apple ID and app-specific password.")
+} else {
+	fail(`No notary login. Add either ${apiKeyVars.join(", ")} or ${appleIdVars.join(", ")} to .env. See the comment at the top of release.js.`)
+}
 
 if (!process.env.APPLE_SIGNING_IDENTITY) {
 	const ids = read("security find-identity -v -p codesigning")
