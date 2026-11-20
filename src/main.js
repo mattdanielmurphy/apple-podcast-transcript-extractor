@@ -927,27 +927,14 @@ async function scanForEpisodes() {
 window.scanForEpisodes = scanForEpisodes
 
 async function checkExistingTranscripts() {
+	// Listed by the Rust backend: the webview has no filesystem permission.
 	try {
-		// In Tauri 2.0, plugins are often under window.__TAURI__.pluginName or window.__TAURI__[pluginName]
-		const fsPlugin = window.__TAURI__.fs || window.__TAURI__.pluginFs
-		if (!fsPlugin || !fsPlugin.readDir) {
-			console.warn("Tauri FS plugin not found in window.__TAURI__")
-			return
-		}
-
-		const { readDir } = fsPlugin
-		const dir = elements.outputDir.value
-
-		try {
-			const entries = await readDir(dir)
-			console.log(`Found ${entries.length} files in output directory`)
-			existingTranscripts = new Set(entries.map((e) => e.name))
-		} catch (e) {
-			console.warn("Could not read output directory (might not exist):", e)
-			existingTranscripts = new Set()
-		}
-	} catch (error) {
-		console.error("Error in checkExistingTranscripts:", error)
+		const names = await invokeTauri("list_output_files", { dir: elements.outputDir.value })
+		console.log(`Found ${names.length} files in output directory`)
+		existingTranscripts = new Set(names)
+	} catch (e) {
+		console.warn("Could not read output directory (might not exist):", e)
+		existingTranscripts = new Set()
 	}
 }
 

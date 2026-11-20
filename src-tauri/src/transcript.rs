@@ -598,3 +598,71 @@ pub fn delete_multiple_episodes_audio(base_dir: &Path, episodes: &[Episode]) -> 
     }
     Ok(count)
 }
+
+/// Names of the entries directly inside `dir` (files and folders, hidden ones
+/// included). The UI uses this to tell which transcripts were already
+/// extracted, so the webview itself needs no filesystem permission.
+pub fn list_dir_names(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {:?}: {}", dir, e))?;
+    Ok(entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unique scratch directory under the system temp dir, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pte-test-{}-{}-{}",
+                tag,
+                std::process::id(),
+                nanos
+            ));
+            fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn list_dir_names_returns_files_and_folders_including_hidden() {
+        let t = TempDir::new("list");
+        fs::write(t.path().join("Show - It's an episode.txt"), "x").unwrap();
+        fs::create_dir(t.path().join(".metadata")).unwrap();
+
+        let mut names = list_dir_names(t.path()).unwrap();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec![".metadata".to_string(), "Show - It's an episode.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_dir_names_errors_on_missing_dir() {
+        let t = TempDir::new("missing");
+        assert!(list_dir_names(&t.path().join("does-not-exist")).is_err());
+    }
+}
