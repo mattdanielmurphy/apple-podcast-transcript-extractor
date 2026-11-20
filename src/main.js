@@ -927,27 +927,14 @@ async function scanForEpisodes() {
 window.scanForEpisodes = scanForEpisodes
 
 async function checkExistingTranscripts() {
+	// Listed by the Rust backend: the webview has no filesystem permission.
 	try {
-		// In Tauri 2.0, plugins are often under window.__TAURI__.pluginName or window.__TAURI__[pluginName]
-		const fsPlugin = window.__TAURI__.fs || window.__TAURI__.pluginFs
-		if (!fsPlugin || !fsPlugin.readDir) {
-			console.warn("Tauri FS plugin not found in window.__TAURI__")
-			return
-		}
-
-		const { readDir } = fsPlugin
-		const dir = elements.outputDir.value
-
-		try {
-			const entries = await readDir(dir)
-			console.log(`Found ${entries.length} files in output directory`)
-			existingTranscripts = new Set(entries.map((e) => e.name))
-		} catch (e) {
-			console.warn("Could not read output directory (might not exist):", e)
-			existingTranscripts = new Set()
-		}
-	} catch (error) {
-		console.error("Error in checkExistingTranscripts:", error)
+		const names = await invokeTauri("list_output_files", { dir: elements.outputDir.value })
+		console.log(`Found ${names.length} files in output directory`)
+		existingTranscripts = new Set(names)
+	} catch (e) {
+		console.warn("Could not read output directory (might not exist):", e)
+		existingTranscripts = new Set()
 	}
 }
 
@@ -1003,7 +990,7 @@ function renderEpisodes() {
 
 	let html = ""
 	if (currentList.length === 0) {
-		const emptyMsg = searchQuery ? `No episodes found matching "${searchQuery}"` : "No episodes found"
+		const emptyMsg = searchQuery ? `No episodes found matching "${escapeHtml(searchQuery)}"` : "No episodes found"
 		html = `<div class="empty-state">
             <h3 class="empty-title">${emptyMsg}</h3>`
 
@@ -1039,8 +1026,8 @@ function renderEpisodes() {
 					<div class="podcast-separator">
 						<span>${escapedPodcast}</span>
 						<div class="podcast-separator-actions">
-							<button type="button" class="podcast-separator-btn" onclick="togglePodcastSelection('${escapedPodcast.replace(/'/g, "\\\\'")}', true)">Select All</button>
-							<button type="button" class="podcast-separator-btn" onclick="togglePodcastSelection('${escapedPodcast.replace(/'/g, "\\\\'")}', false)">Deselect All</button>
+							<button type="button" class="podcast-separator-btn" data-podcast="${escapedPodcast}" onclick="togglePodcastSelection(this.dataset.podcast, true)">Select All</button>
+							<button type="button" class="podcast-separator-btn" data-podcast="${escapedPodcast}" onclick="togglePodcastSelection(this.dataset.podcast, false)">Deselect All</button>
 						</div>
 					</div>`
 				lastPodcast = podcastTitle
@@ -1201,7 +1188,7 @@ function renderEpisodeItem(episode, index, isExisting = false, isCompact = false
                 ${
 									isExisting
 										? `
-                    <button class="btn-text btn-small" onclick="event.stopPropagation(); openExisting('${filePath.replace(/'/g, "\\\\'")}')">
+                    <button class="btn-text btn-small" data-path="${escapeHtml(filePath)}" onclick="event.stopPropagation(); openExisting(this.dataset.path)">
                         Open File
                     </button>
                 `
@@ -1419,7 +1406,7 @@ async function viewTranscript(index) {
 	} catch (error) {
 		console.error("Error loading transcript:", error)
 		setStatus("Error loading transcript", "error")
-		elements.modalContent.innerHTML = `<div class="empty-state">Error: ${error}</div>`
+		elements.modalContent.innerHTML = `<div class="empty-state">Error: ${escapeHtml(error)}</div>`
 	}
 }
 
@@ -1948,8 +1935,10 @@ function showToast(message) {
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--success)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
-        <span>${message}</span>
+        <span></span>
     `
+	// Set via textContent so the message is never parsed as HTML.
+	toast.querySelector("span").textContent = message
 
 	container.appendChild(toast)
 
@@ -1962,11 +1951,17 @@ function showToast(message) {
 	}, 2300)
 }
 
-// Utility: Escape HTML
+// Utility: Escape HTML. Safe for element text AND for double- or single-quoted
+// attribute values (quotes are escaped). Never interpolate untrusted text into
+// inline JS (onclick="…('${text}')"); put it in a data-* attribute instead and
+// read it back via `this.dataset.*`.
 function escapeHtml(text) {
-	const div = document.createElement("div")
-	div.textContent = text
-	return div.innerHTML
+	return String(text ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;")
 }
 
 // Helper to get Tauri APIs safely

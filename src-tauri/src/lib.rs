@@ -103,6 +103,11 @@ fn get_default_transcript_directory(app_handle: tauri::AppHandle) -> Result<Stri
 }
 
 #[tauri::command]
+fn list_output_files(dir: String) -> Result<Vec<String>, String> {
+    transcript::list_dir_names(Path::new(&dir))
+}
+
+#[tauri::command]
 fn load_metadata(output_dir: String) -> Vec<TranscriptMetadata> {
     load_extracted_metadata(&output_dir)
 }
@@ -333,6 +338,7 @@ pub fn run() {
             reveal_audio_multiple,
             get_audio_path_string,
             load_metadata,
+            list_output_files,
             get_suggested_podcasts_dir
         ])
         .run(tauri::generate_context!())

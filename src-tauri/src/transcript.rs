@@ -1,6 +1,6 @@
 use quick_xml::events::Event;
 use quick_xml::Reader;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
@@ -61,6 +61,17 @@ pub fn get_audio_path(base_dir: &Path, uuid: &str) -> Option<PathBuf> {
     None
 }
 
+/// Opens Apple's live Podcasts library read-only. We only ever SELECT from it,
+/// so a read-write handle would just risk touching (or checkpointing) a
+/// database that belongs to another app.
+fn open_podcasts_db(db_path: &Path) -> Result<Connection, String> {
+    Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| format!("Failed to open database: {}", e))
+}
+
 pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
     let ttml_dir = get_ttml_dir(base_dir);
     
@@ -73,11 +84,11 @@ pub fn scan_ttml_files(base_dir: &Path) -> Result<Vec<Episode>, String> {
         return Err(format!("Database not found: {:?}", db_path));
     }
 
-    let conn = Connection::open(&db_path)
-        .map_err(|e| format!("Failed to open database: {}", e))?;
+    let conn = open_podcasts_db(&db_path)?;
+    let metadata_sql = metadata_query(&conn)?;
 
     let mut episodes = Vec::new();
-    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &mut episodes, base_dir)?;
+    find_ttml_files_recursive(&ttml_dir, &ttml_dir, &conn, &metadata_sql, &mut episodes, base_dir)?;
 
     Ok(episodes)
 }
@@ -86,6 +97,7 @@ fn find_ttml_files_recursive(
     dir: &Path,
     base_dir: &Path,
     conn: &Connection,
+    metadata_sql: &str,
     episodes: &mut Vec<Episode>,
     podcasts_base_dir: &Path,
 ) -> Result<(), String> {
@@ -97,7 +109,7 @@ fn find_ttml_files_recursive(
         let path = entry.path();
 
         if path.is_dir() {
-            find_ttml_files_recursive(&path, base_dir, conn, episodes, podcasts_base_dir)?;
+            find_ttml_files_recursive(&path, base_dir, conn, metadata_sql, episodes, podcasts_base_dir)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("ttml") {
             let relative_path = path
                 .strip_prefix(base_dir)
@@ -112,7 +124,7 @@ fn find_ttml_files_recursive(
                 relative_str.clone()
             };
 
-            let metadata = query_episode_metadata(conn, &transcript_identifier);
+            let metadata = query_episode_metadata(conn, metadata_sql, &transcript_identifier)?;
 
             let uuid = metadata.as_ref().and_then(|m| m.get("uuid").cloned().and_then(|v| v.as_str().map(|s| s.to_string())));
             let has_audio = uuid.as_ref().map(|u| get_audio_path(podcasts_base_dir, u).is_some()).unwrap_or(false);
@@ -138,11 +150,18 @@ fn find_ttml_files_recursive(
     Ok(())
 }
 
-fn query_episode_metadata(
-    conn: &Connection,
-    transcript_identifier: &str,
-) -> Option<HashMap<String, serde_json::Value>> {
-    let query = "
+fn table_has_column(conn: &Connection, table: &str, column: &str) -> bool {
+    // PRAGMA arguments can't be bound; `table` is always one of our own constants.
+    let names: Result<Vec<String>, rusqlite::Error> = conn
+        .prepare(&format!("PRAGMA table_info({})", table))
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            rows.collect::<Result<Vec<String>, _>>()
+        });
+    names.map(|cols| cols.iter().any(|c| c == column)).unwrap_or(false)
+}
+
+const METADATA_COLUMNS: &str = "
         SELECT
             e.ZTITLE as episode_title,
             p.ZTITLE as podcast_title,
@@ -152,13 +171,46 @@ fn query_episode_metadata(
             e.ZIMPORTDATE as import_date,
             e.ZUUID as uuid,
             e.ZSTORETRACKID as store_id,
-            p.ZSTORECOLLECTIONID as podcast_store_id
+            p.ZSTORECOLLECTIONID as podcast_store_id";
+
+/// Picks the metadata query that matches this database. Newer Podcasts
+/// versions keep the transcript identifier in ZMTMEDIAENCLOSURE (linked to the
+/// episode through ZEPISODE); older ones had it as a column of ZMTEPISODE.
+fn metadata_query(conn: &Connection) -> Result<String, String> {
+    if table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZTRANSCRIPTIDENTIFIER")
+        && table_has_column(conn, "ZMTMEDIAENCLOSURE", "ZEPISODE")
+    {
+        Ok(format!(
+            "{METADATA_COLUMNS}
+        FROM ZMTMEDIAENCLOSURE m
+        JOIN ZMTEPISODE e ON e.Z_PK = m.ZEPISODE
+        JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
+        WHERE m.ZTRANSCRIPTIDENTIFIER = ?1"
+        ))
+    } else if table_has_column(conn, "ZMTEPISODE", "ZTRANSCRIPTIDENTIFIER") {
+        Ok(format!(
+            "{METADATA_COLUMNS}
         FROM ZMTEPISODE e
         JOIN ZMTPODCAST p ON e.ZPODCASTUUID = p.ZUUID
-        WHERE e.ZTRANSCRIPTIDENTIFIER = ?1
-    ";
+        WHERE e.ZTRANSCRIPTIDENTIFIER = ?1"
+        ))
+    } else {
+        Err("Unsupported Apple Podcasts database: could not find where transcripts are linked \
+             to episodes (neither ZMTMEDIAENCLOSURE.ZTRANSCRIPTIDENTIFIER nor \
+             ZMTEPISODE.ZTRANSCRIPTIDENTIFIER exists). Apple probably changed the schema."
+            .to_string())
+    }
+}
 
-    conn.query_row(query, [transcript_identifier], |row| {
+/// `Ok(None)` means the transcript has no library entry (e.g. the episode was
+/// removed but its cached transcript is still there). A real SQL error is
+/// returned instead of being mistaken for "unknown episode".
+fn query_episode_metadata(
+    conn: &Connection,
+    sql: &str,
+    transcript_identifier: &str,
+) -> Result<Option<HashMap<String, serde_json::Value>>, String> {
+    let result = conn.query_row(sql, [transcript_identifier], |row| {
         let mut map = HashMap::new();
         
         if let Ok(title) = row.get::<_, String>(0) {
@@ -196,8 +248,13 @@ fn query_episode_metadata(
         }
 
         Ok(map)
-    })
-    .ok()
+    });
+
+    match result {
+        Ok(map) => Ok(Some(map)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Episode metadata lookup failed: {}", e)),
+    }
 }
 
 pub fn search_episodes_content(query: String, episodes: Vec<Episode>) -> Vec<usize> {
@@ -395,9 +452,44 @@ pub fn get_transcript_paragraphs(episode: &Episode) -> Result<Vec<Paragraph>, St
     parse_ttml(&ttml_content)
 }
 
+/// One piece of a text node: raw text from the document (`true`) or the
+/// output of an entity/character reference (`false`).
+type TextPiece = (bool, String);
+
+/// Ends the current text node and appends it to the paragraph text followed by
+/// a single space. Like the old `trim_text(true)`, only XML whitespace
+/// (space, tab, CR, LF) is trimmed, only from the *raw* text at the two ends
+/// of the node; whitespace produced by a reference (e.g. `&#32;`) is kept.
+/// Nodes that end up empty are skipped.
+fn flush_text_node(node: &mut Vec<TextPiece>, paragraph_text: &mut String) {
+    const XML_WS: &[char] = &[' ', '\t', '\r', '\n'];
+    if let Some((true, first)) = node.first_mut() {
+        *first = first.trim_start_matches(XML_WS).to_string();
+    }
+    if let Some((true, last)) = node.last_mut() {
+        *last = last.trim_end_matches(XML_WS).to_string();
+    }
+    let text: String = node.drain(..).map(|(_, s)| s).collect();
+    if !text.is_empty() {
+        paragraph_text.push_str(&text);
+        paragraph_text.push(' ');
+    }
+}
+
+/// Appends the character an entity or character reference stands for.
+/// Unknown entities are skipped instead of discarding the surrounding text.
+fn push_entity(out: &mut String, reference: &quick_xml::events::BytesRef) {
+    if reference.is_char_ref() {
+        if let Ok(Some(c)) = reference.resolve_char_ref() {
+            out.push(c);
+        }
+    } else if let Some(s) = quick_xml::escape::resolve_predefined_entity(reference) {
+        out.push_str(s);
+    }
+}
+
 fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     let mut reader = Reader::from_str(content);
-    reader.config_mut().trim_text(true);
 
     let mut paragraphs = Vec::new();
     let mut current_paragraph: Option<Paragraph> = None;
@@ -407,19 +499,43 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
     let get_begin = |e: &quick_xml::events::BytesStart| {
         e.attributes()
             .filter_map(|a| a.ok())
-            .find(|attr| attr.key.local_name().as_ref() == b"begin")
-            .and_then(|attr| {
-                String::from_utf8(attr.value.to_vec())
-                    .ok()
-                    .and_then(|s| parse_ttml_time(s.trim()))
-            })
+            .find(|attr| attr.key.local_name().as_ref() == "begin")
+            .and_then(|attr| parse_ttml_time(attr.value.trim()))
     };
 
+    let mut node: Vec<TextPiece> = Vec::new();
+
     loop {
-        match reader.read_event() {
+        let event = reader.read_event();
+
+        // quick-xml reports entity references (&amp;, &#39;, ...) as separate
+        // events, so one text node can arrive in several pieces. Collect the
+        // whole node here and finish it when the next tag/comment/end shows
+        // up, which reproduces what a single text event used to give us.
+        match &event {
+            Ok(Event::Text(t)) => {
+                if in_paragraph {
+                    let raw: &str = t;
+                    node.push((true, raw.to_string()));
+                }
+                continue;
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if in_paragraph {
+                    let mut resolved = String::new();
+                    push_entity(&mut resolved, r);
+                    node.push((false, resolved));
+                }
+                continue;
+            }
+            _ => {}
+        }
+        flush_text_node(&mut node, &mut current_text);
+
+        match event {
             Ok(Event::Start(e)) => {
                 match e.local_name().as_ref() {
-                    b"p" => {
+                    "p" => {
                         in_paragraph = true;
                         current_paragraph = Some(Paragraph {
                             begin: get_begin(&e),
@@ -427,7 +543,7 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                         });
                         current_text.clear();
                     }
-                    b"span" => {
+                    "span" => {
                         if in_paragraph {
                             if let Some(ref mut para) = current_paragraph {
                                 if para.begin.is_none() {
@@ -440,23 +556,15 @@ fn parse_ttml(content: &str) -> Result<Vec<Paragraph>, String> {
                 }
             }
             Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == b"p" {
+                if e.local_name().as_ref() == "p" {
                     paragraphs.push(Paragraph {
                         begin: get_begin(&e),
                         text: String::new(),
                     });
                 }
             }
-            Ok(Event::Text(e)) => {
-                if in_paragraph {
-                    if let Ok(text) = e.unescape() {
-                        current_text.push_str(&text);
-                        current_text.push(' ');
-                    }
-                }
-            }
             Ok(Event::End(e)) => {
-                if e.local_name().as_ref() == b"p" {
+                if e.local_name().as_ref() == "p" {
                     in_paragraph = false;
                     if let Some(mut para) = current_paragraph.take() {
                         para.text = current_text.trim().to_string();
@@ -597,4 +705,298 @@ pub fn delete_multiple_episodes_audio(base_dir: &Path, episodes: &[Episode]) -> 
         }
     }
     Ok(count)
+}
+
+/// Names of the entries directly inside `dir` (files and folders, hidden ones
+/// included). The UI uses this to tell which transcripts were already
+/// extracted, so the webview itself needs no filesystem permission.
+pub fn list_dir_names(dir: &Path) -> Result<Vec<String>, String> {
+    let entries = fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {:?}: {}", dir, e))?;
+    Ok(entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Unique scratch directory under the system temp dir, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "pte-test-{}-{}-{}",
+                tag,
+                std::process::id(),
+                nanos
+            ));
+            fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn list_dir_names_returns_files_and_folders_including_hidden() {
+        let t = TempDir::new("list");
+        fs::write(t.path().join("Show - It's an episode.txt"), "x").unwrap();
+        fs::create_dir(t.path().join(".metadata")).unwrap();
+
+        let mut names = list_dir_names(t.path()).unwrap();
+        names.sort();
+
+        assert_eq!(
+            names,
+            vec![".metadata".to_string(), "Show - It's an episode.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_dir_names_errors_on_missing_dir() {
+        let t = TempDir::new("missing");
+        assert!(list_dir_names(&t.path().join("does-not-exist")).is_err());
+    }
+
+    const TRANSCRIPT_ID: &str = "PodcastContent1/v4/aa/bb/cc/x/transcript_1.ttml";
+
+    /// Minimal stand-in for Apple's MTLibrary.sqlite (WAL mode, like the real
+    /// one) plus one TTML file for the scanner to find. Returns the base dir.
+    fn podcasts_fixture(t: &TempDir) -> PathBuf {
+        let base = t.path().to_path_buf();
+        let ttml_dir = get_ttml_dir(&base).join("PodcastContent1/v4/aa/bb/cc/x");
+        fs::create_dir_all(&ttml_dir).unwrap();
+        fs::write(
+            ttml_dir.join("transcript_1.ttml"),
+            r#"<tt><body><div><p begin="1.0">hi</p></div></body></tt>"#,
+        )
+        .unwrap();
+        fs::create_dir_all(base.join("Documents")).unwrap();
+
+        let conn = Connection::open(get_database_path(&base)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        conn.execute_batch(&format!(
+            "CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+                 ZAUTHOR VARCHAR, ZCATEGORY VARCHAR, ZSTORECOLLECTIONID INTEGER);
+             CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+                 ZPODCASTUUID VARCHAR, ZTRANSCRIPTIDENTIFIER VARCHAR, ZPUBDATE FLOAT,
+                 ZIMPORTDATE FLOAT, ZSTORETRACKID INTEGER);
+             INSERT INTO ZMTPODCAST (ZUUID, ZTITLE, ZAUTHOR, ZCATEGORY, ZSTORECOLLECTIONID)
+                 VALUES ('P1', 'Dan''s Show', 'Dan', 'Comedy', 123);
+             INSERT INTO ZMTEPISODE (ZUUID, ZTITLE, ZPODCASTUUID, ZTRANSCRIPTIDENTIFIER,
+                 ZPUBDATE, ZIMPORTDATE, ZSTORETRACKID)
+                 VALUES ('E1', 'Say \"hi\" <b>', 'P1', '{}', 700000000.0, 700000001.0, 456);",
+            TRANSCRIPT_ID
+        ))
+        .unwrap();
+        base
+    }
+
+    #[test]
+    fn podcasts_db_is_opened_read_only() {
+        let t = TempDir::new("ro");
+        let base = podcasts_fixture(&t);
+
+        let conn = open_podcasts_db(&get_database_path(&base)).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM ZMTEPISODE", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1, "reads must work on a WAL-mode database");
+        assert!(conn.execute("DELETE FROM ZMTEPISODE", []).is_err(), "writes must be refused");
+        assert!(conn.execute("CREATE TABLE evil (x)", []).is_err(), "schema changes must be refused");
+    }
+
+    #[test]
+    fn scan_finds_episode_with_metadata_and_does_not_modify_the_db() {
+        let t = TempDir::new("scan");
+        let base = podcasts_fixture(&t);
+        let db = get_database_path(&base);
+        let before = fs::read(&db).unwrap();
+
+        let episodes = scan_ttml_files(&base).unwrap();
+
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].transcript_identifier, TRANSCRIPT_ID);
+        assert_eq!(episodes[0].podcast_title.as_deref(), Some("Dan's Show"));
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert_eq!(fs::read(&db).unwrap(), before, "scanning must not modify the database file");
+    }
+
+    #[test]
+    fn reads_rows_still_in_the_wal_while_podcasts_has_the_db_open() {
+        let t = TempDir::new("wal");
+        let base = podcasts_fixture(&t);
+
+        // Stand-in for the running Podcasts app: a writer that keeps the WAL "hot"
+        // (committed rows not yet checkpointed into the main database file).
+        let writer = Connection::open(get_database_path(&base)).unwrap();
+        writer
+            .execute("UPDATE ZMTEPISODE SET ZTITLE = 'Fresh title'", [])
+            .unwrap();
+
+        let episodes = scan_ttml_files(&base).unwrap();
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Fresh title"));
+        drop(writer);
+    }
+
+    #[test]
+    fn parse_ttml_reads_paragraph_text_and_start_times() {
+        let xml = r#"<?xml version="1.0"?>
+<tt xmlns="http://www.w3.org/ns/ttml"><body><div>
+  <p begin="1.5" end="4"><span>Hello</span> <span>world</span></p>
+  <p begin="00:01:02.5"><span begin="62.5">Second</span></p>
+</div></body></tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        assert_eq!(paragraphs.len(), 2);
+        assert_eq!(paragraphs[0].text, "Hello world");
+        assert_eq!(paragraphs[0].begin, Some(1.5));
+        assert_eq!(paragraphs[1].text, "Second");
+        assert_eq!(paragraphs[1].begin, Some(62.5));
+    }
+
+    #[test]
+    fn parse_ttml_handles_namespace_prefixes_and_entities() {
+        let xml = r#"<tt:tt xmlns:tt="http://www.w3.org/ns/ttml"><tt:body><tt:div>
+  <tt:p begin="10"><tt:span>Tom &amp; Jerry&#39;s &lt;show&gt;</tt:span></tt:p>
+</tt:div></tt:body></tt:tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        assert_eq!(paragraphs.len(), 1);
+        assert_eq!(paragraphs[0].text, "Tom & Jerry's <show>");
+        assert_eq!(paragraphs[0].begin, Some(10.0));
+    }
+
+    #[test]
+    fn parse_ttml_keeps_spacing_around_entities() {
+        let xml = r#"<tt><body><div>
+  <p begin="1">Tom &amp; Jerry</p>
+  <p begin="2">AT&amp;T &#x41;&#66;C</p>
+  <p begin="3"><span>one</span><span>two</span></p>
+</div></body></tt>"#;
+
+        let paragraphs = parse_ttml(xml).unwrap();
+
+        // spaces around a reference survive
+        assert_eq!(paragraphs[0].text, "Tom & Jerry");
+        // no separator is invented inside one text node; hex and decimal char refs work
+        assert_eq!(paragraphs[1].text, "AT&T ABC");
+        // separate spans are still joined by exactly one space
+        assert_eq!(paragraphs[2].text, "one two");
+    }
+
+    #[test]
+    fn parse_ttml_rejects_mismatched_tags() {
+        let xml = r#"<tt><body><div><p begin="1">a</span></div></body></tt>"#;
+        assert!(parse_ttml(xml).is_err());
+    }
+
+    fn write_ttml(base: &Path, id: &str) {
+        let file = get_ttml_dir(base).join(id);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, r#"<tt><body><div><p begin="1.0">hi</p></div></body></tt>"#).unwrap();
+    }
+
+    /// WAL-mode database built from `sql`, plus the TTML file for TRANSCRIPT_ID.
+    fn fixture_with_sql(t: &TempDir, sql: &str) -> PathBuf {
+        let base = t.path().to_path_buf();
+        write_ttml(&base, TRANSCRIPT_ID);
+        fs::create_dir_all(base.join("Documents")).unwrap();
+        let conn = Connection::open(get_database_path(&base)).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+        conn.execute_batch(sql).unwrap();
+        base
+    }
+
+    /// Layout written by current Podcasts versions: the transcript identifier is
+    /// in ZMTMEDIAENCLOSURE (linked through ZEPISODE), not in ZMTEPISODE. The row
+    /// numbers are chosen so that joining on the wrong key (enclosure Z_PK =
+    /// episode Z_PK) would return the decoy episode instead of the right one.
+    const CURRENT_SCHEMA_SQL: &str = r#"
+        CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZAUTHOR VARCHAR, ZCATEGORY VARCHAR, ZSTORECOLLECTIONID INTEGER);
+        CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZPODCASTUUID VARCHAR, ZPUBDATE FLOAT, ZIMPORTDATE FLOAT, ZSTORETRACKID INTEGER,
+            ZCURRENTMEDIAENCLOSURE INTEGER);
+        CREATE TABLE ZMTMEDIAENCLOSURE (Z_PK INTEGER PRIMARY KEY, ZEPISODE INTEGER,
+            ZTRANSCRIPTIDENTIFIER VARCHAR);
+        INSERT INTO ZMTPODCAST (ZUUID, ZTITLE, ZAUTHOR, ZCATEGORY, ZSTORECOLLECTIONID)
+            VALUES ('P1', 'Dan''s Show', 'Dan', 'Comedy', 123);
+        INSERT INTO ZMTEPISODE (Z_PK, ZUUID, ZTITLE, ZPODCASTUUID, ZPUBDATE, ZIMPORTDATE,
+            ZSTORETRACKID, ZCURRENTMEDIAENCLOSURE) VALUES
+            (1, 'E0', 'Decoy episode', 'P1', 1.0, 1.0, 111, 2),
+            (2, 'E1', 'Say "hi" <b>', 'P1', 700000000.0, 700000001.0, 456, 1);
+        INSERT INTO ZMTMEDIAENCLOSURE (Z_PK, ZEPISODE, ZTRANSCRIPTIDENTIFIER) VALUES
+            (1, 2, 'PodcastContent1/v4/aa/bb/cc/x/transcript_1.ttml'),
+            (2, 1, 'PodcastContent9/v4/zz/zz/zz/x/transcript_9.ttml');
+    "#;
+
+    /// A schema where the transcript identifier can't be found anywhere.
+    const UNSUPPORTED_SCHEMA_SQL: &str = r#"
+        CREATE TABLE ZMTPODCAST (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR);
+        CREATE TABLE ZMTEPISODE (Z_PK INTEGER PRIMARY KEY, ZUUID VARCHAR, ZTITLE VARCHAR,
+            ZPODCASTUUID VARCHAR);
+    "#;
+
+    #[test]
+    fn scan_finds_metadata_in_the_current_apple_schema() {
+        let t = TempDir::new("current");
+        let base = fixture_with_sql(&t, CURRENT_SCHEMA_SQL);
+
+        let episodes = scan_ttml_files(&base).unwrap();
+
+        assert_eq!(episodes.len(), 1);
+        assert_eq!(episodes[0].transcript_identifier, TRANSCRIPT_ID);
+        assert_eq!(episodes[0].podcast_title.as_deref(), Some("Dan's Show"));
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert_eq!(episodes[0].store_id.as_deref(), Some("456"));
+    }
+
+    #[test]
+    fn transcript_without_a_library_entry_is_listed_without_metadata() {
+        let t = TempDir::new("orphan");
+        let base = fixture_with_sql(&t, CURRENT_SCHEMA_SQL);
+        write_ttml(&base, "PodcastContent2/v4/aa/bb/cc/y/transcript_2.ttml");
+
+        let mut episodes = scan_ttml_files(&base).unwrap();
+        episodes.sort_by(|a, b| a.transcript_identifier.cmp(&b.transcript_identifier));
+
+        assert_eq!(episodes.len(), 2);
+        assert_eq!(episodes[0].episode_title.as_deref(), Some("Say \"hi\" <b>"));
+        assert!(episodes[1].episode_title.is_none() && episodes[1].podcast_title.is_none());
+    }
+
+    #[test]
+    fn unsupported_schema_is_an_error_not_unknown_episodes() {
+        let t = TempDir::new("unsupported");
+        let base = fixture_with_sql(&t, UNSUPPORTED_SCHEMA_SQL);
+
+        let err = scan_ttml_files(&base).unwrap_err();
+
+        assert!(err.contains("Unsupported Apple Podcasts database"), "{err}");
+    }
 }
